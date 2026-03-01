@@ -5,10 +5,11 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
+from app.config import get_settings
 from app.dependencies import get_retrieval_service
 from app.exceptions import EmbeddingError, RerankerError, VectorStoreError
 from app.schemas.retrieve import RetrieveRequest, RetrieveResponse, SourceNode
-from app.services.retrieval_service import RetrievalService
+from app.services.retrieval_service import RetrievalService, synthesize_context
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ async def retrieve(
             query=request.query,
             top_k=request.top_k,
             top_n=request.top_n,
+            min_score=request.min_score,
         )
     except (EmbeddingError, RerankerError) as e:
         return JSONResponse(status_code=502, content={"detail": str(e)})
@@ -54,6 +56,7 @@ async def retrieve(
         total_candidates=result["total_candidates"],
         top_k_used=result["top_k_used"],
         top_n_used=result["top_n_used"],
+        min_score_used=result.get("min_score_used"),
     )
 
 
@@ -62,6 +65,11 @@ async def _stream_retrieval(
     retrieval_service: RetrievalService,
 ):
     """SSE generator for streaming retrieval progress."""
+    effective_min_score = (
+        request.min_score if request.min_score is not None
+        else get_settings().reranker_min_score
+    )
+
     yield {"event": "status", "data": json.dumps({"step": "embedding_query"})}
 
     try:
@@ -97,6 +105,7 @@ async def _stream_retrieval(
                     "total_candidates": 0,
                     "top_k_used": request.top_k,
                     "top_n_used": request.top_n,
+                    "min_score_used": effective_min_score,
                 }),
             }
             return
@@ -129,6 +138,18 @@ async def _stream_retrieval(
                     },
                 })
 
+        # min_score filtering
+        if effective_min_score > 0:
+            source_nodes = [
+                n for n in source_nodes if n["score"] >= effective_min_score
+            ]
+
+        # Context synthesis
+        yield {"event": "status", "data": json.dumps({"step": "context_synthesis"})}
+        source_nodes = await synthesize_context(
+            source_nodes, request.knowledge_base_id, retrieval_service.vector_store
+        )
+
         yield {
             "event": "result",
             "data": json.dumps({
@@ -138,6 +159,7 @@ async def _stream_retrieval(
                 "total_candidates": len(candidates),
                 "top_k_used": request.top_k,
                 "top_n_used": request.top_n,
+                "min_score_used": effective_min_score,
             }),
         }
 

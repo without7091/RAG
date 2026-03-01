@@ -7,11 +7,9 @@ def generate_doc_id(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()[:32]
 
 
-def generate_kb_id(name: str) -> str:
-    """Generate a knowledge base ID from name + random suffix."""
-    suffix = uuid.uuid4().hex[:8]
-    safe_name = "".join(c if c.isalnum() else "_" for c in name)[:20].lower()
-    return f"kb_{safe_name}_{suffix}"
+def generate_kb_id() -> str:
+    """Generate a random knowledge base ID (decoupled from name)."""
+    return f"kb_{uuid.uuid4().hex[:16]}"
 
 
 def generate_task_id() -> str:

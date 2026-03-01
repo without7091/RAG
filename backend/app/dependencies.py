@@ -6,24 +6,35 @@ from app.services.document_service import DocumentService
 from app.services.embedding_service import EmbeddingService
 from app.services.kb_service import KBService
 from app.services.parsing_service import ParsingService
+from app.services.pipeline_worker import PipelineWorker
 from app.services.reranker_service import RerankerService
 from app.services.retrieval_service import RetrievalService
 from app.services.sparse_embedding_service import SparseEmbeddingService
-from app.services.task_manager import TaskManager
 from app.services.vector_store_service import VectorStoreService
 
 # Singletons
-_task_manager = TaskManager()
 _parsing_service = ParsingService()
 _chunking_service: ChunkingService | None = None
 _embedding_service: EmbeddingService | None = None
 _sparse_embedding_service: SparseEmbeddingService | None = None
 _reranker_service: RerankerService | None = None
 _vector_store_service: VectorStoreService | None = None
+_pipeline_worker: PipelineWorker | None = None
 
 
-def get_task_manager() -> TaskManager:
-    return _task_manager
+def get_pipeline_worker() -> PipelineWorker:
+    global _pipeline_worker
+    if _pipeline_worker is None:
+        from app.config import get_settings
+        from app.db.session import get_session_factory
+
+        settings = get_settings()
+        _pipeline_worker = PipelineWorker(
+            session_factory=get_session_factory(),
+            max_concurrency=settings.pipeline_max_concurrency,
+            poll_interval=settings.pipeline_poll_interval,
+        )
+    return _pipeline_worker
 
 
 def get_parsing_service() -> ParsingService:

@@ -6,7 +6,10 @@ _client: httpx.AsyncClient | None = None
 async def get_httpx_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+        _client = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            proxy=None,  # Bypass system proxy to avoid auth header issues
+        )
     return _client
 
 

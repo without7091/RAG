@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     # ── Reranker ──
     reranker_url: str = "https://api.siliconflow.cn/v1/rerank"
     reranker_model: str = "Qwen/Qwen3-Reranker-4B"
+    reranker_min_score: float = 0.1
 
     # ── Sparse Embedding ──
     # "api" = call remote HTTP endpoint; "local" = use local FastEmbed model
@@ -44,11 +45,22 @@ class Settings(BaseSettings):
     upload_dir: str = "./data/uploads"
     max_upload_size_mb: int = 100
 
+    # ── Embedding batching ──
+    embedding_batch_size: int = 64      # Max texts per single API call
+    embedding_concurrency: int = 5      # Max concurrent requests when falling back to one-by-one
+
+    # ── Pipeline Worker ──
+    pipeline_max_concurrency: int = 2       # Max documents processed concurrently
+    pipeline_poll_interval: float = 2.0     # Seconds between polling for PENDING docs
+
     # ── Retrieval defaults ──
-    default_top_k: int = 10
+    default_top_k: int = 20
     default_top_n: int = 3
-    chunk_size: int = 512
-    chunk_overlap: int = 64
+    chunk_size: int = 1024
+    chunk_overlap: int = 128
+    min_chunk_size: int = 50
+    header_prefix_template: str = "[{path}]\n\n"
+    header_separator: str = " > "
 
     @property
     def upload_path(self) -> Path:

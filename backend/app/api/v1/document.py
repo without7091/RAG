@@ -1,23 +1,33 @@
 import aiofiles
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 
 from app.config import get_settings
 from app.db.session import get_session_factory
 from app.dependencies import (
-    get_chunking_service,
     get_doc_service_dep,
-    get_embedding_service,
     get_kb_service_dep,
-    get_parsing_service,
-    get_sparse_embedding_service,
-    get_task_manager,
     get_vector_store_service,
 )
-from app.schemas.document import DocInfo, DocListResponse, DocumentStatus, DocUploadResponse
+from app.models.document import DocumentStatus as ModelDocumentStatus
+from app.schemas.document import (
+    ChunkInfo,
+    DocChunksResponse,
+    DocDeleteResponse,
+    DocInfo,
+    DocListResponse,
+    DocRetryResponse,
+    DocSettingsRequest,
+    DocSettingsResponse,
+    DocumentStatus,
+    DocUploadResponse,
+    VectorizeDocInfo,
+    VectorizeRequest,
+    VectorizeResponse,
+)
 from app.services.document_service import DocumentService
 from app.services.kb_service import KBService
-from app.services.pipeline_service import PipelineService
-from app.services.task_manager import TaskManager
+from app.services.vector_store_service import VectorStoreService
 from app.utils.id_gen import generate_doc_id
 
 router = APIRouter(prefix="/document", tags=["Document"])
@@ -27,10 +37,14 @@ router = APIRouter(prefix="/document", tags=["Document"])
 async def upload_document(
     knowledge_base_id: str,
     file: UploadFile,
+    chunk_size: int | None = Query(default=None, ge=64, le=8192),
+    chunk_overlap: int | None = Query(default=None, ge=0, le=4096),
     kb_service: KBService = Depends(get_kb_service_dep),
-    task_manager: TaskManager = Depends(get_task_manager),
 ):
-    """Upload a document for processing into the knowledge base."""
+    """Upload a document to the knowledge base (file save only, no pipeline).
+
+    Use POST /document/vectorize to start the vectorization pipeline.
+    """
     # Validate KB exists
     await kb_service.get_by_id(knowledge_base_id)
 
@@ -49,44 +63,25 @@ async def upload_document(
     async with aiofiles.open(str(file_path), "wb") as f:
         await f.write(content)
 
-    # Create document record in a new session
+    # Create document record in a new session (status=UPLOADED)
     session_factory = get_session_factory()
     async with session_factory() as session:
         doc_service = DocumentService(session)
-        await doc_service.create(doc_id, file.filename, knowledge_base_id)
-
-    # Create background task
-    task_info = task_manager.create_task()
-
-    # Build pipeline and submit
-    async def _run_pipeline():
-        async with session_factory() as pipeline_session:
-            vs = await get_vector_store_service()
-            pipeline = PipelineService(
-                session=pipeline_session,
-                parsing_service=get_parsing_service(),
-                chunking_service=get_chunking_service(),
-                embedding_service=get_embedding_service(),
-                sparse_embedding_service=get_sparse_embedding_service(),
-                vector_store_service=vs,
-                task_manager=task_manager,
-            )
-            await pipeline.run_pipeline(
-                task_id=task_info.task_id,
-                file_path=str(file_path),
-                doc_id=doc_id,
-                file_name=file.filename,
-                knowledge_base_id=knowledge_base_id,
-            )
-
-    task_manager.submit(task_info.task_id, _run_pipeline())
+        await doc_service.create(
+            doc_id,
+            file.filename,
+            knowledge_base_id,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
 
     return DocUploadResponse(
-        task_id=task_info.task_id,
         doc_id=doc_id,
         file_name=file.filename,
         knowledge_base_id=knowledge_base_id,
-        status=DocumentStatus.PENDING,
+        status=DocumentStatus.UPLOADED,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
     )
 
 
@@ -104,9 +99,231 @@ async def list_documents(
             knowledge_base_id=d.knowledge_base_id,
             status=DocumentStatus(d.status.value),
             chunk_count=d.chunk_count,
+            chunk_size=d.chunk_size,
+            chunk_overlap=d.chunk_overlap,
+            error_message=d.error_message,
+            progress_message=d.progress_message,
             upload_timestamp=d.upload_timestamp,
             updated_at=d.updated_at,
         )
         for d in docs
     ]
     return DocListResponse(documents=items, total=len(items))
+
+
+@router.delete("/{kb_id}/{doc_id}", response_model=DocDeleteResponse)
+async def delete_document(
+    kb_id: str,
+    doc_id: str,
+    doc_service: DocumentService = Depends(get_doc_service_dep),
+    vs_service: VectorStoreService = Depends(get_vector_store_service),
+):
+    """Delete a single document and its vectors from the knowledge base."""
+    await doc_service.delete(doc_id, kb_id)
+    try:
+        await vs_service.delete_by_doc_id(kb_id, doc_id)
+    except Exception:
+        pass  # Vectors may not exist
+    return DocDeleteResponse(doc_id=doc_id, deleted=True)
+
+
+@router.get("/{kb_id}/{doc_id}/chunks", response_model=DocChunksResponse)
+async def get_document_chunks(
+    kb_id: str,
+    doc_id: str,
+    doc_service: DocumentService = Depends(get_doc_service_dep),
+    vs_service: VectorStoreService = Depends(get_vector_store_service),
+):
+    """Get document metadata and its stored chunks from the vector store."""
+    doc = await doc_service.get_by_doc_id_and_kb(doc_id, kb_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+
+    chunks: list[dict] = []
+    if doc.status.value == "completed" and doc.chunk_count > 0:
+        try:
+            chunks = await vs_service.get_chunks_by_doc_id(kb_id, doc_id)
+        except Exception:
+            pass  # Collection may not exist yet
+
+    return DocChunksResponse(
+        doc_id=doc.doc_id,
+        file_name=doc.file_name,
+        knowledge_base_id=doc.knowledge_base_id,
+        status=DocumentStatus(doc.status.value),
+        chunk_count=doc.chunk_count,
+        chunks=[ChunkInfo(**c) for c in chunks],
+    )
+
+
+@router.post("/vectorize", response_model=VectorizeResponse)
+async def vectorize_documents(
+    request: VectorizeRequest,
+    kb_service: KBService = Depends(get_kb_service_dep),
+):
+    """Start vectorization pipeline for one or more uploaded/failed documents.
+
+    Sets documents to PENDING status. The background PipelineWorker will
+    pick them up and process with controlled concurrency.
+    """
+    await kb_service.get_by_id(request.knowledge_base_id)
+
+    settings = get_settings()
+    session_factory = get_session_factory()
+    docs_result: list[VectorizeDocInfo] = []
+
+    async with session_factory() as session:
+        doc_service = DocumentService(session)
+        for doc_id in request.doc_ids:
+            doc = await doc_service.get_by_doc_id_and_kb(doc_id, request.knowledge_base_id)
+            if doc is None:
+                raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+            if doc.status.value not in ("uploaded", "failed", "completed"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Document {doc_id} status is '{doc.status.value}', must be 'uploaded', 'failed', or 'completed'",
+                )
+
+            # Determine chunk params: request override > doc stored > global default
+            effective_chunk_size = request.chunk_size or doc.chunk_size
+            effective_chunk_overlap = request.chunk_overlap or doc.chunk_overlap
+
+            # Cross-field validation
+            if (
+                effective_chunk_size is not None
+                and effective_chunk_overlap is not None
+                and effective_chunk_overlap >= effective_chunk_size
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"chunk_overlap ({effective_chunk_overlap}) must be less than chunk_size ({effective_chunk_size})",
+                )
+
+            # Set cleanup flag if re-vectorizing a completed doc
+            if doc.status.value == "completed":
+                doc.needs_vector_cleanup = True
+
+            # Persist override values
+            if request.chunk_size is not None:
+                doc.chunk_size = request.chunk_size
+            if request.chunk_overlap is not None:
+                doc.chunk_overlap = request.chunk_overlap
+
+            # Verify file exists
+            file_path = settings.upload_path / request.knowledge_base_id / doc.file_name
+            if not file_path.exists():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Original file not found for doc {doc_id}",
+                )
+
+            doc.status = ModelDocumentStatus.PENDING
+            doc.error_message = None
+            doc.progress_message = None
+            await session.commit()
+
+            docs_result.append(
+                VectorizeDocInfo(
+                    doc_id=doc_id,
+                    status=DocumentStatus.PENDING,
+                )
+            )
+
+    return VectorizeResponse(docs=docs_result)
+
+
+@router.post("/{kb_id}/{doc_id}/retry", response_model=DocRetryResponse)
+async def retry_document(
+    kb_id: str,
+    doc_id: str,
+    doc_service: DocumentService = Depends(get_doc_service_dep),
+):
+    """Retry processing a failed, uploaded, or completed document.
+
+    Sets the document to PENDING status. The background PipelineWorker
+    will pick it up automatically.
+    """
+    doc = await doc_service.get_by_doc_id_and_kb(doc_id, kb_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+    if doc.status.value not in ("failed", "uploaded", "completed"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only failed/uploaded/completed documents can be retried, current status: {doc.status.value}",
+        )
+
+    settings = get_settings()
+    file_path = settings.upload_path / kb_id / doc.file_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Original file not found on disk")
+
+    # Set cleanup flag if re-processing a completed doc
+    if doc.status.value == "completed":
+        doc.needs_vector_cleanup = True
+
+    # Reset status to PENDING for worker pickup
+    await doc_service.update_status(doc_id, kb_id, ModelDocumentStatus.PENDING)
+
+    return DocRetryResponse(
+        doc_id=doc_id,
+        status=DocumentStatus.PENDING,
+    )
+
+
+@router.get("/{kb_id}/{doc_id}/download")
+async def download_document(
+    kb_id: str,
+    doc_id: str,
+    doc_service: DocumentService = Depends(get_doc_service_dep),
+):
+    """Download the original uploaded file."""
+    doc = await doc_service.get_by_doc_id_and_kb(doc_id, kb_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+
+    settings = get_settings()
+    file_path = settings.upload_path / kb_id / doc.file_name
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    return FileResponse(
+        path=str(file_path),
+        filename=doc.file_name,
+        media_type="application/octet-stream",
+    )
+
+
+@router.patch("/{kb_id}/{doc_id}/settings", response_model=DocSettingsResponse)
+async def update_document_settings(
+    kb_id: str,
+    doc_id: str,
+    body: DocSettingsRequest,
+    doc_service: DocumentService = Depends(get_doc_service_dep),
+):
+    """Update chunking parameters for a document."""
+    doc = await doc_service.get_by_doc_id_and_kb(doc_id, kb_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document not found: {doc_id}")
+
+    if body.chunk_size is not None:
+        doc.chunk_size = body.chunk_size
+    if body.chunk_overlap is not None:
+        doc.chunk_overlap = body.chunk_overlap
+
+    # Cross-field validation: overlap must be less than size
+    effective_size = doc.chunk_size
+    effective_overlap = doc.chunk_overlap
+    if effective_size is not None and effective_overlap is not None:
+        if effective_overlap >= effective_size:
+            raise HTTPException(
+                status_code=400,
+                detail="chunk_overlap must be less than chunk_size",
+            )
+    await doc_service.session.commit()
+    await doc_service.session.refresh(doc)
+
+    return DocSettingsResponse(
+        doc_id=doc.doc_id,
+        chunk_size=doc.chunk_size,
+        chunk_overlap=doc.chunk_overlap,
+    )

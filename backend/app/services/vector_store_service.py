@@ -163,6 +163,41 @@ class VectorStoreService:
         except Exception as e:
             raise VectorStoreError(f"Hybrid search failed: {e}") from e
 
+    async def get_chunks_by_doc_id(
+        self, collection_name: str, doc_id: str, limit: int = 200
+    ) -> list[dict]:
+        """Retrieve all stored chunks for a given doc_id, sorted by chunk_index."""
+        try:
+            results = await self.client.scroll(
+                collection_name=collection_name,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="doc_id",
+                            match=models.MatchValue(value=doc_id),
+                        )
+                    ]
+                ),
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            points, _next_offset = results
+            chunks = [
+                {
+                    "chunk_index": p.payload.get("chunk_index", 0),
+                    "text": p.payload.get("text", ""),
+                    "header_path": p.payload.get("header_path", ""),
+                    "header_level": p.payload.get("header_level", 0),
+                    "content_type": p.payload.get("content_type", "text"),
+                }
+                for p in points
+            ]
+            chunks.sort(key=lambda c: c["chunk_index"])
+            return chunks
+        except Exception as e:
+            raise VectorStoreError(f"Failed to get chunks: {e}") from e
+
     async def collection_exists(self, collection_name: str) -> bool:
         """Check if a collection exists."""
         return await self.client.collection_exists(collection_name)

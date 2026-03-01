@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import httpx
@@ -15,12 +16,17 @@ class SparseEmbeddingService:
 
     - "api": Call a remote HTTP endpoint (default, for intranet deployment)
     - "local": Use local FastEmbed SPLADE model (requires fastembed + model files)
+
+    API mode supports automatic batching and fallback to one-by-one on 400 errors.
     """
 
     def __init__(self, client: httpx.AsyncClient | None = None):
         settings = get_settings()
         self.mode = settings.sparse_embedding_mode
         self._client = client
+        self.batch_size = settings.embedding_batch_size
+        self._concurrency_sem = asyncio.Semaphore(settings.embedding_concurrency)
+        self._fallback_to_single = False
 
         if self.mode == "api":
             self.api_url = settings.sparse_embedding_url
@@ -40,8 +46,28 @@ class SparseEmbeddingService:
             return self._client
         return await get_httpx_client()
 
+    @staticmethod
+    def _parse_sparse_results(data: dict) -> list[dict]:
+        """Parse API response into list of sparse vectors."""
+        results = []
+        for item in data["data"]:
+            emb = item["embedding"]
+            if isinstance(emb, dict):
+                results.append({
+                    "indices": emb.get("indices", []),
+                    "values": emb.get("values", []),
+                })
+            elif isinstance(emb, list):
+                indices = [i for i, v in enumerate(emb) if v != 0.0]
+                values = [emb[i] for i in indices]
+                results.append({"indices": indices, "values": values})
+            else:
+                results.append({"indices": [], "values": []})
+        return results
+
     @retry_on_api_error(max_attempts=3)
-    async def _api_embed_texts(self, texts: list[str]) -> list[dict]:
+    async def _call_api(self, texts: list[str]) -> list[dict]:
+        """Call sparse embedding API for a list of texts."""
         client = await self._get_client()
         payload = {
             "model": self.model,
@@ -61,24 +87,53 @@ class SparseEmbeddingService:
         except httpx.TimeoutException as e:
             raise TimeoutError(f"Sparse embedding API timeout: {e}") from e
 
-        data = response.json()
-        results = []
-        for item in data["data"]:
-            emb = item["embedding"]
-            # API may return dense-style vector or sparse {indices, values} dict
-            if isinstance(emb, dict):
-                results.append({
-                    "indices": emb.get("indices", []),
-                    "values": emb.get("values", []),
-                })
-            elif isinstance(emb, list):
-                # Dense-format returned — convert to sparse by taking non-zero entries
-                indices = [i for i, v in enumerate(emb) if v != 0.0]
-                values = [emb[i] for i in indices]
-                results.append({"indices": indices, "values": values})
-            else:
-                results.append({"indices": [], "values": []})
-        return results
+        return self._parse_sparse_results(response.json())
+
+    async def _embed_single_api(self, text: str) -> dict:
+        """Embed a single text via API with concurrency control."""
+        async with self._concurrency_sem:
+            results = await self._call_api([text])
+            return results[0]
+
+    async def _embed_one_by_one_api(self, texts: list[str]) -> list[dict]:
+        """Embed texts one at a time via API with concurrency semaphore."""
+        tasks = [self._embed_single_api(t) for t in texts]
+        return list(await asyncio.gather(*tasks))
+
+    async def _embed_batch_api(self, batch: list[str]) -> list[dict]:
+        """Embed a batch via API, falling back to one-by-one on 400 errors."""
+        if self._fallback_to_single:
+            return await self._embed_one_by_one_api(batch)
+
+        try:
+            return await self._call_api(batch)
+        except EmbeddingError as e:
+            if "400" in str(e) and len(batch) > 1:
+                logger.warning(
+                    "Sparse embedding API rejected batch of %d texts (400). "
+                    "Falling back to one-by-one mode for remaining requests.",
+                    len(batch),
+                )
+                self._fallback_to_single = True
+                return await self._embed_one_by_one_api(batch)
+            raise
+
+    async def _api_embed_texts(self, texts: list[str]) -> list[dict]:
+        """Embed texts via API with automatic batching."""
+        all_results: list[dict] = []
+        total = len(texts)
+
+        for i in range(0, total, self.batch_size):
+            batch = texts[i : i + self.batch_size]
+            batch_num = i // self.batch_size + 1
+            total_batches = (total + self.batch_size - 1) // self.batch_size
+            logger.debug(
+                "Sparse embedding batch %d/%d (%d texts)", batch_num, total_batches, len(batch)
+            )
+            result = await self._embed_batch_api(batch)
+            all_results.extend(result)
+
+        return all_results
 
     # ── Local mode ──
 

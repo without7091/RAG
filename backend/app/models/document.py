@@ -1,13 +1,14 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 
 
 class DocumentStatus(enum.Enum):
+    UPLOADED = "uploaded"
     PENDING = "pending"
     PARSING = "parsing"
     CHUNKING = "chunking"
@@ -34,7 +35,11 @@ class Document(Base):
         Enum(DocumentStatus), default=DocumentStatus.PENDING, nullable=False
     )
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_overlap: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    needs_vector_cleanup: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    progress_message: Mapped[str | None] = mapped_column(String(256), nullable=True)
     upload_timestamp: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

@@ -19,7 +19,7 @@ class KBService:
         if existing.scalar_one_or_none() is not None:
             raise KnowledgeBaseAlreadyExistsError(name)
 
-        kb_id = generate_kb_id(name)
+        kb_id = generate_kb_id()
         kb = KnowledgeBase(
             knowledge_base_id=kb_id,
             knowledge_base_name=name,
@@ -49,6 +49,27 @@ class KBService:
         kb = await self.get_by_id(kb_id)
         await self.session.delete(kb)
         await self.session.commit()
+
+    async def update(
+        self, kb_id: str, name: str | None = None, description: str | None = None
+    ) -> KnowledgeBase:
+        kb = await self.get_by_id(kb_id)
+        if name is not None:
+            # Check for duplicate name (excluding self)
+            existing = await self.session.execute(
+                select(KnowledgeBase).where(
+                    KnowledgeBase.knowledge_base_name == name,
+                    KnowledgeBase.knowledge_base_id != kb_id,
+                )
+            )
+            if existing.scalar_one_or_none() is not None:
+                raise KnowledgeBaseAlreadyExistsError(name)
+            kb.knowledge_base_name = name
+        if description is not None:
+            kb.description = description
+        await self.session.commit()
+        await self.session.refresh(kb)
+        return kb
 
     async def get_document_count(self, kb_id: str) -> int:
         result = await self.session.execute(

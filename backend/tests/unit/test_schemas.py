@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.common import TaskStatus, TaskStatusResponse
-from app.schemas.document import DocumentStatus, DocUploadResponse
+from app.schemas.document import DocumentStatus, DocUploadResponse, VectorizeDocInfo, VectorizeResponse, DocRetryResponse
 from app.schemas.kb import KBCreateRequest, KBCreateResponse, KBInfo, KBListResponse
 from app.schemas.retrieve import RetrieveRequest, RetrieveResponse, SourceNode
 
@@ -42,16 +42,40 @@ class TestKBSchemas:
 
 
 class TestDocumentSchemas:
-    def test_doc_upload_response(self):
+    def test_doc_upload_response_no_task_id(self):
         resp = DocUploadResponse(
-            task_id="task_123",
             doc_id="doc_abc",
             file_name="test.pdf",
             knowledge_base_id="kb_1",
+            status=DocumentStatus.UPLOADED,
+        )
+        assert resp.status == DocumentStatus.UPLOADED
+        assert not hasattr(resp, "task_id")
+
+    def test_vectorize_doc_info_no_task_id(self):
+        info = VectorizeDocInfo(
+            doc_id="doc_abc",
             status=DocumentStatus.PENDING,
         )
-        assert resp.status == DocumentStatus.PENDING
-        assert resp.task_id == "task_123"
+        assert info.doc_id == "doc_abc"
+        assert info.status == DocumentStatus.PENDING
+        assert not hasattr(info, "task_id")
+
+    def test_vectorize_response_uses_docs(self):
+        resp = VectorizeResponse(
+            docs=[VectorizeDocInfo(doc_id="d1", status=DocumentStatus.PENDING)]
+        )
+        assert len(resp.docs) == 1
+        assert resp.docs[0].doc_id == "d1"
+        assert not hasattr(resp, "tasks")
+
+    def test_doc_retry_response_no_task_id(self):
+        resp = DocRetryResponse(
+            doc_id="doc_retry",
+            status=DocumentStatus.PENDING,
+        )
+        assert resp.doc_id == "doc_retry"
+        assert not hasattr(resp, "task_id")
 
 
 class TestRetrieveSchemas:
@@ -61,7 +85,7 @@ class TestRetrieveSchemas:
             knowledge_base_id="kb_1",
             query="test query",
         )
-        assert req.top_k == 10
+        assert req.top_k == 20
         assert req.top_n == 3
         assert req.stream is True
 

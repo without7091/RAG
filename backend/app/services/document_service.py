@@ -10,15 +10,23 @@ class DocumentService:
         self.session = session
 
     async def create(
-        self, doc_id: str, file_name: str, knowledge_base_id: str
+        self,
+        doc_id: str,
+        file_name: str,
+        knowledge_base_id: str,
+        status: DocumentStatus = DocumentStatus.UPLOADED,
+        chunk_size: int | None = None,
+        chunk_overlap: int | None = None,
     ) -> Document:
         # Check for existing document with same (kb_id, doc_id) — if found, reset it
         existing = await self.get_by_doc_id_and_kb(doc_id, knowledge_base_id)
         if existing is not None:
-            existing.status = DocumentStatus.PENDING
+            existing.status = status
             existing.file_name = file_name
             existing.chunk_count = 0
             existing.error_message = None
+            existing.chunk_size = chunk_size
+            existing.chunk_overlap = chunk_overlap
             await self.session.commit()
             await self.session.refresh(existing)
             return existing
@@ -27,7 +35,9 @@ class DocumentService:
             doc_id=doc_id,
             file_name=file_name,
             knowledge_base_id=knowledge_base_id,
-            status=DocumentStatus.PENDING,
+            status=status,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
         )
         self.session.add(doc)
         await self.session.commit()
@@ -69,6 +79,7 @@ class DocumentService:
         status: DocumentStatus,
         chunk_count: int | None = None,
         error_message: str | None = None,
+        progress_message: str | None = None,
     ) -> Document:
         doc = await self.get_by_doc_id_and_kb(doc_id, knowledge_base_id)
         if doc is None:
@@ -78,6 +89,7 @@ class DocumentService:
             doc.chunk_count = chunk_count
         if error_message is not None:
             doc.error_message = error_message
+        doc.progress_message = progress_message
         await self.session.commit()
         await self.session.refresh(doc)
         return doc

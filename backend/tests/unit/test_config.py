@@ -10,12 +10,15 @@ class TestSettings:
         assert s.embedding_model == "Qwen/Qwen3-Embedding-4B"
         assert s.reranker_url == "https://api.siliconflow.cn/v1/rerank"
         assert s.reranker_model == "Qwen/Qwen3-Reranker-4B"
-        assert s.embedding_dimension == 1024
+        assert s.embedding_dimension == 2560
         assert s.sparse_embedding_mode == "api"
-        assert s.default_top_k == 10
+        assert s.default_top_k == 20
         assert s.default_top_n == 3
-        assert s.chunk_size == 512
-        assert s.chunk_overlap == 64
+        assert s.chunk_size == 1024
+        assert s.chunk_overlap == 128
+        assert s.min_chunk_size == 50
+        assert s.header_prefix_template == "[{path}]\n\n"
+        assert s.header_separator == " > "
         assert s.max_upload_size_mb == 100
 
     def test_embedding_url_property(self):
@@ -31,6 +34,19 @@ class TestSettings:
 
         s = Settings(siliconflow_api_key="test-key", upload_dir="/tmp/uploads")
         assert s.upload_path == Path("/tmp/uploads")
+
+    def test_pipeline_worker_defaults(self):
+        s = Settings(siliconflow_api_key="test-key")
+        assert s.pipeline_max_concurrency == 2
+        assert s.pipeline_poll_interval == 2.0
+
+    def test_pipeline_worker_from_env(self, monkeypatch):
+        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
+        monkeypatch.setenv("PIPELINE_MAX_CONCURRENCY", "4")
+        monkeypatch.setenv("PIPELINE_POLL_INTERVAL", "5.0")
+        s = Settings()
+        assert s.pipeline_max_concurrency == 4
+        assert s.pipeline_poll_interval == 5.0
 
     def test_from_env(self, monkeypatch):
         monkeypatch.setenv("SILICONFLOW_API_KEY", "sk-test-env")

@@ -16,7 +16,9 @@ async def vs_service(qdrant_client):
     return VectorStoreService(qdrant_client)
 
 
-DENSE_DIM = 1024
+from app.config import get_settings
+
+DENSE_DIM = get_settings().embedding_dimension
 
 
 class TestVectorStoreService:

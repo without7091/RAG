@@ -28,6 +28,18 @@ class KBListResponse(BaseModel):
     total: int
 
 
+class KBUpdateRequest(BaseModel):
+    knowledge_base_name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=512)
+
+
+class KBUpdateResponse(BaseModel):
+    knowledge_base_id: str
+    knowledge_base_name: str
+    description: str
+    created_at: datetime
+
+
 class KBDeleteResponse(BaseModel):
     knowledge_base_id: str
     deleted: bool

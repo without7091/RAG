@@ -7,6 +7,8 @@ from app.schemas.kb import (
     KBDeleteResponse,
     KBInfo,
     KBListResponse,
+    KBUpdateRequest,
+    KBUpdateResponse,
 )
 from app.services.kb_service import KBService
 from app.services.vector_store_service import VectorStoreService
@@ -50,6 +52,26 @@ async def list_kbs(
             )
         )
     return KBListResponse(knowledge_bases=items, total=len(items))
+
+
+@router.patch("/{kb_id}", response_model=KBUpdateResponse)
+async def update_kb(
+    kb_id: str,
+    request: KBUpdateRequest,
+    kb_service: KBService = Depends(get_kb_service_dep),
+):
+    """Update a knowledge base's name and/or description."""
+    kb = await kb_service.update(
+        kb_id,
+        name=request.knowledge_base_name,
+        description=request.description,
+    )
+    return KBUpdateResponse(
+        knowledge_base_id=kb.knowledge_base_id,
+        knowledge_base_name=kb.knowledge_base_name,
+        description=kb.description,
+        created_at=kb.created_at,
+    )
 
 
 @router.delete("/{kb_id}", response_model=KBDeleteResponse)

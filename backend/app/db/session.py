@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
@@ -43,6 +44,14 @@ async def init_db(engine=None) -> None:
     engine = engine or get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Migrate: add new columns if missing (SQLite ALTER TABLE)
+    async with engine.begin() as conn:
+        for col in ("chunk_size INTEGER", "chunk_overlap INTEGER", "progress_message VARCHAR(256)", "needs_vector_cleanup BOOLEAN DEFAULT 0"):
+            try:
+                await conn.execute(text(f"ALTER TABLE documents ADD COLUMN {col}"))
+            except Exception:
+                pass  # column already exists
 
 
 async def close_db() -> None:

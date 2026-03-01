@@ -20,7 +20,7 @@ class TestDocumentService:
         doc = await svc.create("doc_abc", "test.pdf", kb_id)
         assert doc.doc_id == "doc_abc"
         assert doc.file_name == "test.pdf"
-        assert doc.status == DocumentStatus.PENDING
+        assert doc.status == DocumentStatus.UPLOADED
 
     async def test_create_duplicate_resets(self, db_session: AsyncSession, kb_id: str):
         svc = DocumentService(db_session)
@@ -31,7 +31,7 @@ class TestDocumentService:
 
         # Re-create with same doc_id resets
         doc2 = await svc.create("doc_dup", "v2.pdf", kb_id)
-        assert doc2.status == DocumentStatus.PENDING
+        assert doc2.status == DocumentStatus.UPLOADED
         assert doc2.file_name == "v2.pdf"
         assert doc2.chunk_count == 0
 
@@ -79,6 +79,19 @@ class TestDocumentService:
         await svc.delete("doc_del", kb_id)
         found = await svc.get_by_doc_id_and_kb("doc_del", kb_id)
         assert found is None
+
+    async def test_needs_vector_cleanup_default_false(self, db_session: AsyncSession, kb_id: str):
+        svc = DocumentService(db_session)
+        doc = await svc.create("doc_cleanup", "cleanup.pdf", kb_id)
+        assert doc.needs_vector_cleanup is False
+
+    async def test_needs_vector_cleanup_can_be_set(self, db_session: AsyncSession, kb_id: str):
+        svc = DocumentService(db_session)
+        doc = await svc.create("doc_cleanup2", "cleanup2.pdf", kb_id)
+        doc.needs_vector_cleanup = True
+        await db_session.commit()
+        await db_session.refresh(doc)
+        assert doc.needs_vector_cleanup is True
 
     async def test_status_flow(self, db_session: AsyncSession, kb_id: str):
         """Test full status transition: PENDING -> PARSING -> CHUNKING -> ... -> COMPLETED."""
