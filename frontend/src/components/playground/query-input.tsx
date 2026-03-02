@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { Loader2, Search } from "lucide-react";
 import type { KBInfo } from "@/lib/api";
 
@@ -25,6 +26,8 @@ interface Props {
   onTopKChange: (v: number) => void;
   topN: number;
   onTopNChange: (v: number) => void;
+  enableReranker: boolean;
+  onEnableRerankerChange: (v: boolean) => void;
   onRetrieve: () => void;
   running: boolean;
 }
@@ -39,6 +42,8 @@ export function QueryInput({
   onTopKChange,
   topN,
   onTopNChange,
+  enableReranker,
+  onEnableRerankerChange,
   onRetrieve,
   running,
 }: Props) {
@@ -86,7 +91,7 @@ export function QueryInput({
             <span className="ml-1.5">检索</span>
           </Button>
         </div>
-        <div className="flex gap-8">
+        <div className="flex gap-8 items-end">
           <div className="flex-1">
             <Label className="text-xs">
               Top-K (候选数量): {topK}
@@ -112,6 +117,16 @@ export function QueryInput({
               onValueChange={([v]) => onTopNChange(v)}
               className="mt-2"
             />
+          </div>
+          <div className="flex items-center gap-2 shrink-0 pb-0.5">
+            <Switch
+              id="reranker-toggle"
+              checked={enableReranker}
+              onCheckedChange={onEnableRerankerChange}
+            />
+            <Label htmlFor="reranker-toggle" className="text-xs cursor-pointer">
+              Reranker
+            </Label>
           </div>
         </div>
       </CardContent>

@@ -83,18 +83,23 @@ class RetrievalService:
         top_k: int = 20,
         top_n: int = 3,
         min_score: float | None = None,
+        enable_reranker: bool = True,
     ) -> dict:
         """Execute full retrieval pipeline.
 
         Returns dict with:
         - source_nodes: list of result dicts
         - total_candidates: number of raw candidates
-        - top_k_used, top_n_used, min_score_used
+        - top_k_used, top_n_used, min_score_used, enable_reranker_used
         """
-        effective_min_score = (
-            min_score if min_score is not None
-            else get_settings().reranker_min_score
-        )
+        # min_score logic: adapt based on reranker mode
+        if min_score is not None:
+            effective_min_score = min_score
+        elif enable_reranker:
+            effective_min_score = get_settings().reranker_min_score
+        else:
+            # RRF scores (~0.01-0.1) are a different scale than reranker scores (0-1)
+            effective_min_score = 0.0
 
         # Step 1: Embed query (dense + sparse + BM25)
         dense_vector = await self.embedding.embed_query(query)
@@ -121,22 +126,40 @@ class RetrievalService:
                 "top_k_used": top_k,
                 "top_n_used": top_n,
                 "min_score_used": effective_min_score,
+                "enable_reranker_used": enable_reranker,
             }
 
-        # Step 3: Rerank
-        texts = [hit["payload"].get("text", "") for hit in candidates]
-        reranked = await self.reranker.rerank(query, texts, top_n=top_n)
-
-        # Step 4: Build source nodes from reranked results
+        # Step 3: Rerank or skip
         source_nodes = []
-        for item in reranked:
-            idx = item["index"]
-            if idx < len(candidates):
-                candidate = candidates[idx]
+        if enable_reranker:
+            texts = [hit["payload"].get("text", "") for hit in candidates]
+            reranked = await self.reranker.rerank(query, texts, top_n=top_n)
+
+            for item in reranked:
+                idx = item["index"]
+                if idx < len(candidates):
+                    candidate = candidates[idx]
+                    payload = candidate["payload"]
+                    source_nodes.append({
+                        "text": payload.get("text", ""),
+                        "score": item["score"],
+                        "doc_id": payload.get("doc_id", ""),
+                        "file_name": payload.get("file_name", ""),
+                        "knowledge_base_id": payload.get("knowledge_base_id", ""),
+                        "chunk_index": payload.get("chunk_index"),
+                        "header_path": payload.get("header_path"),
+                        "metadata": {
+                            k: v for k, v in payload.items()
+                            if k not in {"text", "doc_id", "file_name", "knowledge_base_id"}
+                        },
+                    })
+        else:
+            # Skip reranker: use RRF fusion scores directly, take top_n
+            for candidate in candidates[:top_n]:
                 payload = candidate["payload"]
                 source_nodes.append({
                     "text": payload.get("text", ""),
-                    "score": item["score"],
+                    "score": candidate["score"],
                     "doc_id": payload.get("doc_id", ""),
                     "file_name": payload.get("file_name", ""),
                     "knowledge_base_id": payload.get("knowledge_base_id", ""),
@@ -148,13 +171,13 @@ class RetrievalService:
                     },
                 })
 
-        # Step 5: min_score filtering
+        # Step 4: min_score filtering
         if effective_min_score > 0:
             source_nodes = [
                 n for n in source_nodes if n["score"] >= effective_min_score
             ]
 
-        # Step 6: Context synthesis — enrich with adjacent chunks
+        # Step 5: Context synthesis — enrich with adjacent chunks
         source_nodes = await synthesize_context(
             source_nodes, knowledge_base_id, self.vector_store
         )
@@ -165,4 +188,5 @@ class RetrievalService:
             "top_k_used": top_k,
             "top_n_used": top_n,
             "min_score_used": effective_min_score,
+            "enable_reranker_used": enable_reranker,
         }

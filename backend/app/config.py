@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     reranker_url: str = "https://api.siliconflow.cn/v1/rerank"
     reranker_model: str = "Qwen/Qwen3-Reranker-4B"
     reranker_min_score: float = 0.1
+    default_enable_reranker: bool = True
 
     # ── Sparse Embedding (learned) ──
     # "api" = call remote HTTP endpoint; "local" = use local FastEmbed model

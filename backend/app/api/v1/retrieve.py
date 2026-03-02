@@ -39,6 +39,7 @@ async def retrieve(
             top_k=request.top_k,
             top_n=request.top_n,
             min_score=request.min_score,
+            enable_reranker=request.enable_reranker,
         )
     except (EmbeddingError, RerankerError) as e:
         return JSONResponse(status_code=502, content={"detail": str(e)})
@@ -57,6 +58,7 @@ async def retrieve(
         top_k_used=result["top_k_used"],
         top_n_used=result["top_n_used"],
         min_score_used=result.get("min_score_used"),
+        enable_reranker_used=result.get("enable_reranker_used", True),
     )
 
 
@@ -65,10 +67,15 @@ async def _stream_retrieval(
     retrieval_service: RetrievalService,
 ):
     """SSE generator for streaming retrieval progress."""
-    effective_min_score = (
-        request.min_score if request.min_score is not None
-        else get_settings().reranker_min_score
-    )
+    enable_reranker = request.enable_reranker
+
+    # min_score logic: adapt based on reranker mode
+    if request.min_score is not None:
+        effective_min_score = request.min_score
+    elif enable_reranker:
+        effective_min_score = get_settings().reranker_min_score
+    else:
+        effective_min_score = 0.0
 
     yield {"event": "status", "data": json.dumps({"step": "embedding_query"})}
 
@@ -91,14 +98,6 @@ async def _stream_retrieval(
             bm25_vector=bm25_vector,
         )
 
-        yield {
-            "event": "status",
-            "data": json.dumps({
-                "step": "reranking",
-                "candidates": len(candidates),
-            }),
-        }
-
         if not candidates:
             yield {
                 "event": "result",
@@ -110,27 +109,60 @@ async def _stream_retrieval(
                     "top_k_used": request.top_k,
                     "top_n_used": request.top_n,
                     "min_score_used": effective_min_score,
+                    "enable_reranker_used": enable_reranker,
                 }),
             }
             return
 
-        # Rerank
-        texts = [hit["payload"].get("text", "") for hit in candidates]
-        reranked = await retrieval_service.reranker.rerank(
-            request.query, texts, top_n=request.top_n
-        )
-
-        yield {"event": "status", "data": json.dumps({"step": "building_response"})}
-
-        # Build response
         source_nodes = []
-        for item in reranked:
-            idx = item["index"]
-            if idx < len(candidates):
-                payload = candidates[idx]["payload"]
+
+        if enable_reranker:
+            yield {
+                "event": "status",
+                "data": json.dumps({
+                    "step": "reranking",
+                    "candidates": len(candidates),
+                }),
+            }
+
+            # Rerank
+            texts = [hit["payload"].get("text", "") for hit in candidates]
+            reranked = await retrieval_service.reranker.rerank(
+                request.query, texts, top_n=request.top_n
+            )
+
+            for item in reranked:
+                idx = item["index"]
+                if idx < len(candidates):
+                    payload = candidates[idx]["payload"]
+                    source_nodes.append({
+                        "text": payload.get("text", ""),
+                        "score": item["score"],
+                        "doc_id": payload.get("doc_id", ""),
+                        "file_name": payload.get("file_name", ""),
+                        "knowledge_base_id": payload.get("knowledge_base_id", ""),
+                        "chunk_index": payload.get("chunk_index"),
+                        "header_path": payload.get("header_path"),
+                        "metadata": {
+                            k: v for k, v in payload.items()
+                            if k not in {"text", "doc_id", "file_name", "knowledge_base_id"}
+                        },
+                    })
+        else:
+            yield {
+                "event": "status",
+                "data": json.dumps({
+                    "step": "skipping_reranker",
+                    "candidates": len(candidates),
+                }),
+            }
+
+            # Skip reranker: use RRF fusion scores, take top_n
+            for candidate in candidates[:request.top_n]:
+                payload = candidate["payload"]
                 source_nodes.append({
                     "text": payload.get("text", ""),
-                    "score": item["score"],
+                    "score": candidate["score"],
                     "doc_id": payload.get("doc_id", ""),
                     "file_name": payload.get("file_name", ""),
                     "knowledge_base_id": payload.get("knowledge_base_id", ""),
@@ -141,6 +173,8 @@ async def _stream_retrieval(
                         if k not in {"text", "doc_id", "file_name", "knowledge_base_id"}
                     },
                 })
+
+        yield {"event": "status", "data": json.dumps({"step": "building_response"})}
 
         # min_score filtering
         if effective_min_score > 0:
@@ -164,6 +198,7 @@ async def _stream_retrieval(
                 "top_k_used": request.top_k,
                 "top_n_used": request.top_n,
                 "min_score_used": effective_min_score,
+                "enable_reranker_used": enable_reranker,
             }),
         }
 

@@ -75,7 +75,8 @@ export type DocumentStatus =
   | "embedding"
   | "upserting"
   | "completed"
-  | "failed";
+  | "failed"
+  | "initializing";
 
 export interface DocInfo {
   doc_id: string;
@@ -241,6 +242,7 @@ export interface RetrieveRequest {
   query: string;
   top_k?: number;
   top_n?: number;
+  enable_reranker?: boolean;
   stream?: boolean;
 }
 
@@ -252,6 +254,7 @@ export interface RetrieveResponse {
   top_k_used: number;
   top_n_used: number;
   min_score_used: number | null;
+  enable_reranker_used: boolean;
 }
 
 export function retrieveJSON(data: RetrieveRequest) {

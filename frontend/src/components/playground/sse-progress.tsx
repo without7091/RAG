@@ -7,6 +7,7 @@ const STEP_LABELS: Record<string, string> = {
   embedding_query: "Query 向量化",
   hybrid_search: "混合检索",
   reranking: "重排序",
+  skipping_reranker: "跳过重排序",
   building_response: "构建响应",
 };
 
@@ -16,7 +17,9 @@ interface Props {
 }
 
 export function SSEProgress({ steps, running }: Props) {
-  const allSteps = ["embedding_query", "hybrid_search", "reranking", "building_response"];
+  const hasSkipReranker = steps.some((s) => s.step === "skipping_reranker");
+  const rerankStep = hasSkipReranker ? "skipping_reranker" : "reranking";
+  const allSteps = ["embedding_query", "hybrid_search", rerankStep, "building_response"];
   const completedSteps = new Set(steps.map((s) => s.step));
   const currentStep = steps.length > 0 ? steps[steps.length - 1].step : null;
 

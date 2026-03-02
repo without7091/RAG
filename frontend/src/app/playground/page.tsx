@@ -18,6 +18,7 @@ export default function PlaygroundPage() {
   const [query, setQuery] = useState("");
   const [topK, setTopK] = useState(10);
   const [topN, setTopN] = useState(3);
+  const [enableReranker, setEnableReranker] = useState(true);
   const [running, setRunning] = useState(false);
   const [steps, setSteps] = useState<{ step: string; candidates?: number }[]>([]);
   const [result, setResult] = useState<RetrieveResponse | null>(null);
@@ -53,6 +54,7 @@ export default function PlaygroundPage() {
         query: query.trim(),
         top_k: topK,
         top_n: topN,
+        enable_reranker: enableReranker,
         stream: true,
       },
       {
@@ -69,7 +71,7 @@ export default function PlaygroundPage() {
         },
       }
     );
-  }, [selectedKb, query, topK, topN]);
+  }, [selectedKb, query, topK, topN, enableReranker]);
 
   return (
     <div className="space-y-4 h-full flex flex-col">
@@ -85,6 +87,8 @@ export default function PlaygroundPage() {
         onTopKChange={setTopK}
         topN={topN}
         onTopNChange={setTopN}
+        enableReranker={enableReranker}
+        onEnableRerankerChange={setEnableReranker}
         onRetrieve={handleRetrieve}
         running={running}
       />

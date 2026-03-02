@@ -77,7 +77,7 @@ export default function DataGovernancePage() {
   const updateDocStatuses = useCallback(
     (docIds: string[], status: string) => {
       setDocs((prev) =>
-        prev.map((d) => (docIds.includes(d.doc_id) ? { ...d, status } : d))
+        prev.map((d) => (docIds.includes(d.doc_id) ? { ...d, status: status as DocInfo["status"] } : d))
       );
     },
     []

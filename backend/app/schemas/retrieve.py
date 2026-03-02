@@ -20,6 +20,7 @@ class RetrieveRequest(BaseModel):
     top_k: int = Field(default=20, ge=1, le=100)
     top_n: int = Field(default=3, ge=1, le=50)
     min_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    enable_reranker: bool = Field(default=True, description="Enable reranker for result reranking")
     stream: bool = Field(default=True, description="SSE streaming mode")
 
 
@@ -31,3 +32,4 @@ class RetrieveResponse(BaseModel):
     top_k_used: int
     top_n_used: int
     min_score_used: float | None = None
+    enable_reranker_used: bool = True
