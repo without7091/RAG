@@ -92,6 +92,121 @@ class TestVectorStoreService:
         await vs_service.upsert_points("empty_col", [], [], [])
         # Should not raise
 
+    async def test_create_collection_has_bm25_space(self, vs_service, qdrant_client):
+        """New collections should have dense + sparse + bm25 vector spaces."""
+        await vs_service.create_collection("bm25_col")
+        info = await qdrant_client.get_collection("bm25_col")
+        # Check sparse vectors config includes both "sparse" and "bm25"
+        sparse_names = set(info.config.params.sparse_vectors.keys())
+        assert "sparse" in sparse_names
+        assert "bm25" in sparse_names
+        # Check dense vector config
+        assert "dense" in info.config.params.vectors
+
+    async def test_upsert_three_vectors(self, vs_service):
+        """Upsert with all three vector types and search."""
+        await vs_service.create_collection("three_vec_col")
+
+        dense_vectors = [[0.5] * DENSE_DIM]
+        sparse_vectors = [{"indices": [1, 5], "values": [0.5, 0.3]}]
+        bm25_vectors = [{"indices": [10, 20], "values": [2.0, 1.0]}]
+        payloads = [{"text": "three vector doc", "doc_id": "doc3v"}]
+
+        await vs_service.upsert_points(
+            "three_vec_col", dense_vectors, sparse_vectors, payloads,
+            bm25_vectors=bm25_vectors,
+        )
+
+        results = await vs_service.hybrid_search(
+            "three_vec_col",
+            dense_vector=[0.5] * DENSE_DIM,
+            sparse_vector={"indices": [1, 5], "values": [0.5, 0.3]},
+            bm25_vector={"indices": [10, 20], "values": [2.0, 1.0]},
+            top_k=5,
+        )
+        assert len(results) >= 1
+        assert results[0]["payload"]["doc_id"] == "doc3v"
+
+    async def test_three_way_hybrid_search(self, vs_service):
+        """BM25 path should help recall keyword-matching documents."""
+        await vs_service.create_collection("three_way_col")
+
+        # Doc 1: strong on dense, weak on BM25
+        # Doc 2: weak on dense, strong on BM25 keyword match
+        dense_vectors = [
+            [0.9] * DENSE_DIM,
+            [0.1] * DENSE_DIM,
+        ]
+        sparse_vectors = [
+            {"indices": [1], "values": [0.5]},
+            {"indices": [2], "values": [0.5]},
+        ]
+        bm25_vectors = [
+            {"indices": [100], "values": [1.0]},
+            {"indices": [200], "values": [1.0]},
+        ]
+        payloads = [
+            {"text": "dense match doc", "doc_id": "dense_doc"},
+            {"text": "keyword match doc", "doc_id": "keyword_doc"},
+        ]
+
+        await vs_service.upsert_points(
+            "three_way_col", dense_vectors, sparse_vectors, payloads,
+            bm25_vectors=bm25_vectors,
+        )
+
+        # Query that matches keyword_doc via BM25 but dense_doc via dense
+        results = await vs_service.hybrid_search(
+            "three_way_col",
+            dense_vector=[0.9] * DENSE_DIM,
+            sparse_vector={"indices": [2], "values": [0.5]},
+            bm25_vector={"indices": [200], "values": [1.0]},
+            top_k=5,
+        )
+        # Both docs should be recalled
+        doc_ids = {r["payload"]["doc_id"] for r in results}
+        assert "dense_doc" in doc_ids
+        assert "keyword_doc" in doc_ids
+
+    async def test_upsert_backward_compat_no_bm25(self, vs_service):
+        """Upsert without bm25_vectors should still work."""
+        await vs_service.create_collection("compat_col")
+
+        await vs_service.upsert_points(
+            "compat_col",
+            dense_vectors=[[0.5] * DENSE_DIM],
+            sparse_vectors=[{"indices": [1], "values": [0.5]}],
+            payloads=[{"text": "no bm25", "doc_id": "doc_compat"}],
+        )
+
+        results = await vs_service.hybrid_search(
+            "compat_col",
+            dense_vector=[0.5] * DENSE_DIM,
+            sparse_vector={"indices": [1], "values": [0.5]},
+            top_k=5,
+        )
+        assert len(results) >= 1
+
+    async def test_hybrid_search_backward_compat_no_bm25(self, vs_service):
+        """Hybrid search without bm25_vector should still work (two-way)."""
+        await vs_service.create_collection("compat_search_col")
+
+        await vs_service.upsert_points(
+            "compat_search_col",
+            dense_vectors=[[0.5] * DENSE_DIM],
+            sparse_vectors=[{"indices": [1], "values": [0.5]}],
+            payloads=[{"text": "compat search", "doc_id": "doc_cs"}],
+        )
+
+        # No bm25_vector argument
+        results = await vs_service.hybrid_search(
+            "compat_search_col",
+            dense_vector=[0.5] * DENSE_DIM,
+            sparse_vector={"indices": [1], "values": [0.5]},
+            top_k=5,
+        )
+        assert len(results) >= 1
+
     async def test_delete_before_insert_pattern(self, vs_service):
         """Verify delete-before-insert prevents duplicates."""
         await vs_service.create_collection("dbi_col")

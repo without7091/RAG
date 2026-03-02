@@ -1,0 +1,44 @@
+# ─── Python ───
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# ─── Environment ───
+.env
+.venv/
+venv/
+env/
+
+# ─── Data (runtime generated) ───
+data/
+backend/data/
+backend/test_uploads/
+backend/nul
+backend/uvicorn.log
+backend/tmp_openapi.json
+
+# ─── Node / Next.js ───
+node_modules/
+.next/
+out/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# ─── OS ───
+.DS_Store
+Thumbs.db
+nul
+*.swp
+*~
+
+# ─── IDE ───
+.idea/
+.vscode/
+*.code-workspace

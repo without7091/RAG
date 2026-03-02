@@ -37,6 +37,9 @@ class VectorStoreService:
                     "sparse": models.SparseVectorParams(
                         modifier=models.Modifier.IDF,
                     ),
+                    "bm25": models.SparseVectorParams(
+                        modifier=models.Modifier.IDF,
+                    ),
                 },
             )
             logger.info(f"Created hybrid collection '{collection_name}'")
@@ -77,8 +80,9 @@ class VectorStoreService:
         dense_vectors: list[list[float]],
         sparse_vectors: list[dict],
         payloads: list[dict],
+        bm25_vectors: list[dict] | None = None,
     ) -> None:
-        """Upsert points with dense + sparse vectors and metadata payloads."""
+        """Upsert points with dense + sparse + optional BM25 vectors and metadata payloads."""
         if not dense_vectors:
             return
 
@@ -96,6 +100,13 @@ class VectorStoreService:
                     indices=sparse["indices"],
                     values=sparse["values"],
                 )
+            if bm25_vectors is not None and i < len(bm25_vectors):
+                bm25 = bm25_vectors[i]
+                if bm25.get("indices") and bm25.get("values"):
+                    named_sparse["bm25"] = models.SparseVector(
+                        indices=bm25["indices"],
+                        values=bm25["values"],
+                    )
 
             points.append(
                 models.PointStruct(
@@ -120,6 +131,7 @@ class VectorStoreService:
         dense_vector: list[float],
         sparse_vector: dict,
         top_k: int = 10,
+        bm25_vector: dict | None = None,
     ) -> list[dict]:
         """Execute hybrid search using Qdrant prefetch + RRF fusion."""
         try:
@@ -140,6 +152,19 @@ class VectorStoreService:
                             values=sparse_vector["values"],
                         ),
                         using="sparse",
+                        limit=top_k,
+                    ),
+                )
+
+            # Add BM25 prefetch if provided
+            if bm25_vector and bm25_vector.get("indices") and bm25_vector.get("values"):
+                prefetch.append(
+                    models.Prefetch(
+                        query=models.SparseVector(
+                            indices=bm25_vector["indices"],
+                            values=bm25_vector["values"],
+                        ),
+                        using="bm25",
                         limit=top_k,
                     ),
                 )

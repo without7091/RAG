@@ -9,6 +9,7 @@ from app.services.chunking_service import ChunkingService
 from app.services.document_service import DocumentService
 from app.services.embedding_service import EmbeddingService
 from app.services.parsing_service import ParsingService
+from app.services.bm25_service import BM25Service
 from app.services.sparse_embedding_service import SparseEmbeddingService
 from app.services.task_manager import TaskManager
 from app.services.vector_store_service import VectorStoreService
@@ -29,6 +30,7 @@ class PipelineService:
         embedding_service: EmbeddingService,
         sparse_embedding_service: SparseEmbeddingService,
         vector_store_service: VectorStoreService,
+        bm25_service: BM25Service | None = None,
         task_manager: TaskManager | None = None,
     ):
         self.session = session
@@ -37,6 +39,7 @@ class PipelineService:
         self.embedding = embedding_service
         self.sparse_embedding = sparse_embedding_service
         self.vector_store = vector_store_service
+        self.bm25 = bm25_service
         self.task_manager = task_manager
         self.doc_service = DocumentService(session)
 
@@ -130,6 +133,16 @@ class PipelineService:
             sparse_vectors = await self.sparse_embedding.embed_texts_async(texts)
             logger.info("Pipeline[%s] sparse embedding: %.1fms, %d vectors", doc_id[:12], (time.perf_counter() - t0) * 1000, len(sparse_vectors))
 
+            # Step 4b: BM25 sparse vectors (traditional keyword)
+            bm25_vectors = None
+            if self.bm25 is not None:
+                self._update_task(
+                    task_id, progress=f"Generating BM25 vectors for {len(nodes)} chunks..."
+                )
+                t0 = time.perf_counter()
+                bm25_vectors = self.bm25.batch_to_sparse_vectors(texts)
+                logger.info("Pipeline[%s] BM25 vectors: %.1fms, %d vectors", doc_id[:12], (time.perf_counter() - t0) * 1000, len(bm25_vectors))
+
             # Step 5: Upsert to vector store (delete-before-insert)
             self._update_task(task_id, progress="Upserting to vector store...")
             await self.doc_service.update_status(
@@ -157,7 +170,8 @@ class PipelineService:
 
             t0 = time.perf_counter()
             await self.vector_store.upsert_points(
-                knowledge_base_id, dense_vectors, sparse_vectors, payloads
+                knowledge_base_id, dense_vectors, sparse_vectors, payloads,
+                bm25_vectors=bm25_vectors,
             )
             logger.info("Pipeline[%s] upsert: %.1fms, %d points", doc_id[:12], (time.perf_counter() - t0) * 1000, len(payloads))
 

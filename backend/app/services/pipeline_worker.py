@@ -172,6 +172,7 @@ class PipelineWorker:
         """
         from app.config import get_settings
         from app.dependencies import (
+            get_bm25_service,
             get_embedding_service,
             get_parsing_service,
             get_sparse_embedding_service,
@@ -214,6 +215,7 @@ class PipelineWorker:
             embedding_service=get_embedding_service(),
             sparse_embedding_service=get_sparse_embedding_service(),
             vector_store_service=await get_vector_store_service(),
+            bm25_service=get_bm25_service(),
             task_manager=None,
         )
 

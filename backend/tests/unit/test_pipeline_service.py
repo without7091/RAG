@@ -34,12 +34,18 @@ def mock_services():
     vector_store.delete_by_doc_id = AsyncMock()
     vector_store.upsert_points = AsyncMock()
 
+    bm25_service = MagicMock()
+    bm25_service.batch_to_sparse_vectors = MagicMock(
+        return_value=[{"indices": [10, 20], "values": [2.0, 1.0]}]
+    )
+
     return {
         "parsing": parsing,
         "chunking": chunking,
         "embedding": embedding,
         "sparse_embedding": sparse_embedding,
         "vector_store": vector_store,
+        "bm25_service": bm25_service,
     }
 
 
@@ -63,6 +69,7 @@ class TestPipelineServiceWithoutTaskManager:
             embedding_service=mock_services["embedding"],
             sparse_embedding_service=mock_services["sparse_embedding"],
             vector_store_service=mock_services["vector_store"],
+            bm25_service=mock_services["bm25_service"],
             task_manager=None,
         )
 
@@ -97,6 +104,7 @@ class TestPipelineServiceWithoutTaskManager:
             embedding_service=mock_services["embedding"],
             sparse_embedding_service=mock_services["sparse_embedding"],
             vector_store_service=mock_services["vector_store"],
+            bm25_service=mock_services["bm25_service"],
             task_manager=None,
         )
 
@@ -111,3 +119,104 @@ class TestPipelineServiceWithoutTaskManager:
         doc = await doc_svc.get_by_doc_id_and_kb("doc_fail", kb.knowledge_base_id)
         assert doc.status == DocumentStatus.FAILED
         assert "Parse error" in doc.error_message
+
+
+class TestPipelineServiceBM25:
+    """Tests for BM25 integration in PipelineService."""
+
+    async def test_pipeline_calls_bm25_service(self, db_session: AsyncSession, mock_services):
+        """Pipeline should call bm25_service.batch_to_sparse_vectors with chunk texts."""
+        from app.services.kb_service import KBService
+        from app.services.document_service import DocumentService
+
+        kb_svc = KBService(db_session)
+        kb = await kb_svc.create("BM25 Pipeline KB")
+        doc_svc = DocumentService(db_session)
+        await doc_svc.create("doc_bm25", "bm25.md", kb.knowledge_base_id)
+
+        pipeline = PipelineService(
+            session=db_session,
+            parsing_service=mock_services["parsing"],
+            chunking_service=mock_services["chunking"],
+            embedding_service=mock_services["embedding"],
+            sparse_embedding_service=mock_services["sparse_embedding"],
+            vector_store_service=mock_services["vector_store"],
+            bm25_service=mock_services["bm25_service"],
+            task_manager=None,
+        )
+
+        await pipeline.run_pipeline(
+            task_id="unused",
+            file_path="/tmp/bm25.md",
+            doc_id="doc_bm25",
+            file_name="bm25.md",
+            knowledge_base_id=kb.knowledge_base_id,
+        )
+
+        mock_services["bm25_service"].batch_to_sparse_vectors.assert_called_once_with(["chunk1"])
+
+    async def test_pipeline_passes_bm25_to_upsert(self, db_session: AsyncSession, mock_services):
+        """Pipeline should pass bm25_vectors to upsert_points."""
+        from app.services.kb_service import KBService
+        from app.services.document_service import DocumentService
+
+        kb_svc = KBService(db_session)
+        kb = await kb_svc.create("BM25 Upsert KB")
+        doc_svc = DocumentService(db_session)
+        await doc_svc.create("doc_bm25u", "bm25u.md", kb.knowledge_base_id)
+
+        pipeline = PipelineService(
+            session=db_session,
+            parsing_service=mock_services["parsing"],
+            chunking_service=mock_services["chunking"],
+            embedding_service=mock_services["embedding"],
+            sparse_embedding_service=mock_services["sparse_embedding"],
+            vector_store_service=mock_services["vector_store"],
+            bm25_service=mock_services["bm25_service"],
+            task_manager=None,
+        )
+
+        await pipeline.run_pipeline(
+            task_id="unused",
+            file_path="/tmp/bm25u.md",
+            doc_id="doc_bm25u",
+            file_name="bm25u.md",
+            knowledge_base_id=kb.knowledge_base_id,
+        )
+
+        # Check that upsert_points was called with bm25_vectors keyword argument
+        call_kwargs = mock_services["vector_store"].upsert_points.call_args
+        assert "bm25_vectors" in call_kwargs.kwargs
+        assert call_kwargs.kwargs["bm25_vectors"] == [{"indices": [10, 20], "values": [2.0, 1.0]}]
+
+    async def test_pipeline_works_without_bm25(self, db_session: AsyncSession, mock_services):
+        """Pipeline should work fine when bm25_service is None."""
+        from app.services.kb_service import KBService
+        from app.services.document_service import DocumentService
+
+        kb_svc = KBService(db_session)
+        kb = await kb_svc.create("No BM25 KB")
+        doc_svc = DocumentService(db_session)
+        await doc_svc.create("doc_nobm25", "nobm25.md", kb.knowledge_base_id)
+
+        pipeline = PipelineService(
+            session=db_session,
+            parsing_service=mock_services["parsing"],
+            chunking_service=mock_services["chunking"],
+            embedding_service=mock_services["embedding"],
+            sparse_embedding_service=mock_services["sparse_embedding"],
+            vector_store_service=mock_services["vector_store"],
+            bm25_service=None,
+            task_manager=None,
+        )
+
+        await pipeline.run_pipeline(
+            task_id="unused",
+            file_path="/tmp/nobm25.md",
+            doc_id="doc_nobm25",
+            file_name="nobm25.md",
+            knowledge_base_id=kb.knowledge_base_id,
+        )
+
+        doc = await doc_svc.get_by_doc_id_and_kb("doc_nobm25", kb.knowledge_base_id)
+        assert doc.status == DocumentStatus.COMPLETED

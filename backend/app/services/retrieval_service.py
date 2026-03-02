@@ -1,6 +1,7 @@
 import logging
 
 from app.config import get_settings
+from app.services.bm25_service import BM25Service
 from app.services.embedding_service import EmbeddingService
 from app.services.reranker_service import RerankerService
 from app.services.sparse_embedding_service import SparseEmbeddingService
@@ -67,11 +68,13 @@ class RetrievalService:
         sparse_embedding_service: SparseEmbeddingService,
         vector_store_service: VectorStoreService,
         reranker_service: RerankerService,
+        bm25_service: BM25Service | None = None,
     ):
         self.embedding = embedding_service
         self.sparse_embedding = sparse_embedding_service
         self.vector_store = vector_store_service
         self.reranker = reranker_service
+        self.bm25 = bm25_service
 
     async def retrieve(
         self,
@@ -93,9 +96,12 @@ class RetrievalService:
             else get_settings().reranker_min_score
         )
 
-        # Step 1: Embed query (dense + sparse)
+        # Step 1: Embed query (dense + sparse + BM25)
         dense_vector = await self.embedding.embed_query(query)
         sparse_vector = await self.sparse_embedding.embed_query_async(query)
+        bm25_vector = None
+        if self.bm25 is not None:
+            bm25_vector = self.bm25.text_to_sparse_vector(query)
 
         # Step 2: Hybrid search
         candidates = await self.vector_store.hybrid_search(
@@ -103,6 +109,7 @@ class RetrievalService:
             dense_vector=dense_vector,
             sparse_vector=sparse_vector,
             top_k=top_k,
+            bm25_vector=bm25_vector,
         )
 
         total_candidates = len(candidates)

@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 
 from app.db.session import get_session
+from app.services.bm25_service import BM25Service
 from app.services.chunking_service import ChunkingService
 from app.services.document_service import DocumentService
 from app.services.embedding_service import EmbeddingService
@@ -19,6 +20,7 @@ _embedding_service: EmbeddingService | None = None
 _sparse_embedding_service: SparseEmbeddingService | None = None
 _reranker_service: RerankerService | None = None
 _vector_store_service: VectorStoreService | None = None
+_bm25_service: BM25Service | None = None
 _pipeline_worker: PipelineWorker | None = None
 
 
@@ -69,6 +71,26 @@ def get_reranker_service() -> RerankerService:
     return _reranker_service
 
 
+def get_bm25_service() -> BM25Service:
+    global _bm25_service
+    if _bm25_service is None:
+        from app.config import get_settings
+
+        settings = get_settings()
+        stopwords = None
+        if settings.bm25_stopwords_path:
+            from pathlib import Path
+
+            path = Path(settings.bm25_stopwords_path)
+            if path.exists():
+                stopwords = set(path.read_text(encoding="utf-8").splitlines())
+        _bm25_service = BM25Service(
+            vocab_size=settings.bm25_vocab_size,
+            stopwords=stopwords,
+        )
+    return _bm25_service
+
+
 async def get_vector_store_service() -> VectorStoreService:
     global _vector_store_service
     if _vector_store_service is None:
@@ -96,4 +118,5 @@ async def get_retrieval_service() -> RetrievalService:
         sparse_embedding_service=get_sparse_embedding_service(),
         vector_store_service=vs,
         reranker_service=get_reranker_service(),
+        bm25_service=get_bm25_service(),
     )

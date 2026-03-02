@@ -73,9 +73,12 @@ async def _stream_retrieval(
     yield {"event": "status", "data": json.dumps({"step": "embedding_query"})}
 
     try:
-        # Embed query
+        # Embed query (dense + sparse + BM25)
         dense_vector = await retrieval_service.embedding.embed_query(request.query)
         sparse_vector = await retrieval_service.sparse_embedding.embed_query_async(request.query)
+        bm25_vector = None
+        if retrieval_service.bm25 is not None:
+            bm25_vector = retrieval_service.bm25.text_to_sparse_vector(request.query)
 
         yield {"event": "status", "data": json.dumps({"step": "hybrid_search"})}
 
@@ -85,6 +88,7 @@ async def _stream_retrieval(
             dense_vector=dense_vector,
             sparse_vector=sparse_vector,
             top_k=request.top_k,
+            bm25_vector=bm25_vector,
         )
 
         yield {

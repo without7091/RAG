@@ -10,8 +10,8 @@ class TestSettings:
         assert s.embedding_model == "Qwen/Qwen3-Embedding-4B"
         assert s.reranker_url == "https://api.siliconflow.cn/v1/rerank"
         assert s.reranker_model == "Qwen/Qwen3-Reranker-4B"
-        assert s.embedding_dimension == 2560
-        assert s.sparse_embedding_mode == "api"
+        assert s.embedding_dimension == 1024
+        assert s.sparse_embedding_mode == "local"
         assert s.default_top_k == 20
         assert s.default_top_n == 3
         assert s.chunk_size == 1024
@@ -47,6 +47,16 @@ class TestSettings:
         s = Settings()
         assert s.pipeline_max_concurrency == 4
         assert s.pipeline_poll_interval == 5.0
+
+    def test_bm25_defaults(self):
+        s = Settings(siliconflow_api_key="test-key")
+        assert s.bm25_vocab_size == 1_048_576
+        assert s.bm25_stopwords_path is None
+
+    def test_sparse_model_default(self):
+        s = Settings(siliconflow_api_key="test-key")
+        assert s.fastembed_model_name == "Qdrant/bm25"
+        assert s.sparse_embedding_model == "Qdrant/bm25"
 
     def test_from_env(self, monkeypatch):
         monkeypatch.setenv("SILICONFLOW_API_KEY", "sk-test-env")

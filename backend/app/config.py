@@ -25,15 +25,19 @@ class Settings(BaseSettings):
     reranker_model: str = "Qwen/Qwen3-Reranker-4B"
     reranker_min_score: float = 0.1
 
-    # ── Sparse Embedding ──
+    # ── Sparse Embedding (learned) ──
     # "api" = call remote HTTP endpoint; "local" = use local FastEmbed model
-    sparse_embedding_mode: str = "api"
+    sparse_embedding_mode: str = "local"
     # API mode settings
     sparse_embedding_url: str = "https://api.siliconflow.cn/v1/embeddings"
-    sparse_embedding_model: str = "Qdrant/bm42-all-minilm-l6-v2-attentions"
+    sparse_embedding_model: str = "Qdrant/bm25"
     # Local mode settings (only used when sparse_embedding_mode=local)
     fastembed_cache_path: str = "./data/fastembed_cache"
-    fastembed_model_name: str = "Qdrant/bm42-all-minilm-l6-v2-attentions"
+    fastembed_model_name: str = "Qdrant/bm25"
+
+    # ── BM25 (traditional keyword sparse) ──
+    bm25_vocab_size: int = 1_048_576
+    bm25_stopwords_path: str | None = None
 
     # ── Qdrant ──
     qdrant_storage_path: str = "./data/qdrant_storage"

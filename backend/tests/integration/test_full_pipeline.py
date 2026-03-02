@@ -83,6 +83,27 @@ class FakeSparseEmbeddingService:
         }
 
 
+class FakeBM25Service:
+    """Deterministic BM25 sparse vectors using character frequency hashing."""
+
+    def text_to_sparse_vector(self, text: str) -> dict:
+        return self._text_to_bm25(text)
+
+    def batch_to_sparse_vectors(self, texts: list[str]) -> list[dict]:
+        return [self._text_to_bm25(t) for t in texts]
+
+    def _text_to_bm25(self, text: str) -> dict:
+        freq: dict[int, float] = {}
+        for ch in text:
+            idx = ord(ch) % 100000
+            freq[idx] = freq.get(idx, 0) + 1.0
+        sorted_idx = sorted(freq.keys())
+        return {
+            "indices": sorted_idx,
+            "values": [freq[i] for i in sorted_idx],
+        }
+
+
 class FakeRerankerService:
     """Reranker based on character-level Jaccard similarity.
 
@@ -177,6 +198,7 @@ def services(qdrant):
         "chunking": ChunkingService(chunk_size=256, chunk_overlap=32),
         "embedding": FakeEmbeddingService(),
         "sparse": FakeSparseEmbeddingService(),
+        "bm25": FakeBM25Service(),
         "vector_store": VectorStoreService(qdrant),
         "reranker": FakeRerankerService(),
         "task_manager": TaskManager(),
@@ -202,6 +224,7 @@ async def run_pipeline_sync(
         embedding_service=services["embedding"],
         sparse_embedding_service=services["sparse"],
         vector_store_service=services["vector_store"],
+        bm25_service=services.get("bm25"),
         task_manager=tm,
     )
 
@@ -734,6 +757,7 @@ class TestRetrievalServiceEndToEnd:
             sparse_embedding_service=services["sparse"],
             vector_store_service=services["vector_store"],
             reranker_service=services["reranker"],
+            bm25_service=services.get("bm25"),
         )
 
         result = await retrieval.retrieve(
@@ -756,3 +780,57 @@ class TestRetrievalServiceEndToEnd:
             assert "file_name" in node
             assert "knowledge_base_id" in node
             assert node["knowledge_base_id"] == kb_id
+
+
+class TestBM25KeywordMatching:
+    """Verify that BM25 (third retrieval path) improves keyword recall."""
+
+    async def test_bm25_helps_keyword_recall(self, session_factory, services, tmp_path):
+        """BM25 path should help surface documents with exact keyword matches."""
+        from app.services.retrieval_service import RetrievalService
+
+        kb_id = "kb_bm25_e2e"
+        await services["vector_store"].create_collection(kb_id)
+
+        async with session_factory() as session:
+            kb_svc = KBService(session)
+            await kb_svc.create("BM25 E2E KB")
+
+        # Ingest a document with specific keywords
+        md_file = tmp_path / "keywords.md"
+        create_md_file(
+            md_file,
+            "# 故障代码手册\n\n## ERR-7042\n\n当出现ERR-7042错误时，"
+            "请检查网络连接并重启设备。\n\n"
+            "## ERR-5019\n\n当出现ERR-5019错误时，请联系技术支持。\n",
+        )
+
+        async with session_factory() as session:
+            doc_svc = DocumentService(session)
+            await doc_svc.create("doc_err", "keywords.md", kb_id)
+            await run_pipeline_sync(
+                session, services, str(md_file), "doc_err", "keywords.md", kb_id
+            )
+
+        # Build retrieval with BM25
+        retrieval = RetrievalService(
+            embedding_service=services["embedding"],
+            sparse_embedding_service=services["sparse"],
+            vector_store_service=services["vector_store"],
+            reranker_service=services["reranker"],
+            bm25_service=services.get("bm25"),
+        )
+
+        result = await retrieval.retrieve(
+            knowledge_base_id=kb_id,
+            query="ERR-7042错误怎么解决",
+            top_k=10,
+            top_n=3,
+        )
+
+        assert result["total_candidates"] > 0
+        # At least one result should mention ERR-7042
+        texts = [n["text"] for n in result["source_nodes"]]
+        assert any("ERR-7042" in t for t in texts), (
+            f"BM25 should help recall ERR-7042 keyword, got: {texts}"
+        )
