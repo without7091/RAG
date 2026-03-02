@@ -11,11 +11,11 @@ Production-grade multi-tenant RAG (Retrieval-Augmented Generation) knowledge man
 
 ## Current State
 
-v1.0.0 — Complete working platform with backend and frontend.
+v2.0.0 — Feature-complete platform with advanced retrieval controls and custom chunking.
 
-- **Backend**: Fully functional FastAPI service with hybrid search (dense + BM42 sparse), reranker, document upload pipeline, knowledge base CRUD
-- **Frontend**: Next.js admin dashboard with knowledge base management, document management, retrieval playground
-- **Docs**: API documentation, technical reports
+- **Backend**: Fully functional FastAPI service with hybrid search (dense + BM42 sparse), reranker (with dynamic toggle), document upload pipeline, pre-chunked JSON upload, knowledge base CRUD
+- **Frontend**: Next.js admin dashboard with knowledge base management, document management, retrieval playground (with Reranker on/off switch)
+- **Docs**: V1 docs archived in `docs/v1_archive/`, V2 architecture design, RAG evolution research report
 
 ## Git & Version Control
 
@@ -61,10 +61,11 @@ Hybrid Retrieve (Top-K) → Rerank (Top-N) → Context Synthesis (adjacent chunk
 ### Multi-Tenancy
 Each knowledge base (`knowledge_base_id`) maps to an independent Qdrant Collection. API requests include `user_id` for caller identity and `knowledge_base_id` for routing.
 
-### Key API Endpoints (planned)
+### Key API Endpoints
 - `POST /api/v1/kb/create` — Create knowledge base (initializes Qdrant Collection with dual-index)
 - `POST /api/v1/document/upload` — Upload documents (async parse → chunk → embed → upsert pipeline)
-- `POST /api/v1/retrieve` — Core retrieval: hybrid search → rerank → context synthesis
+- `POST /api/v1/document/upload-chunks` — Upload pre-chunked documents as JSON (skip parse+chunk)
+- `POST /api/v1/retrieve` — Core retrieval: hybrid search → rerank (optional) → context synthesis
 
 ### Data Integrity Pattern
 Upsert uses delete-before-insert keyed on `doc_id` (content-based hash) to prevent duplicate/stale data.
