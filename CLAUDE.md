@@ -11,13 +11,25 @@ Production-grade multi-tenant RAG (Retrieval-Augmented Generation) knowledge man
 
 ## Current State
 
-This is a greenfield project in the planning/requirements phase. The repo contains:
-- `README.md` — Full PRD with product positioning, architecture, and API specs
-- `后端需求设计.md` — Backend technical requirements
-- `前端需求设计 .md` — Frontend technical requirements
-- `rag_demo.py` — Reference implementation demonstrating the core RAG pipeline
+v1.0.0 — Complete working platform with backend and frontend.
 
-No build system, dependency files, tests, or CI/CD exist yet.
+- **Backend**: Fully functional FastAPI service with hybrid search (dense + BM42 sparse), reranker, document upload pipeline, knowledge base CRUD
+- **Frontend**: Next.js admin dashboard with knowledge base management, document management, retrieval playground
+- **Docs**: API documentation, technical reports
+
+## Git & Version Control
+
+**Repository**: https://github.com/without7091/RAG
+**Branch**: `main`
+
+### Git Workflow Rules (IMPORTANT)
+- **Every significant change must be committed and pushed** — Claude Code should proactively commit after completing a feature, fix, or refactor
+- **Commit messages**: Use clear, descriptive messages in the format `<type>: <description>` (e.g., `feat: add document preview`, `fix: retrieval score normalization`, `refactor: extract chunking module`)
+- **Before starting work**: Always `git pull` to sync with remote
+- **After completing work**: Stage relevant files, commit, and push. Never use `git add -A` blindly — review what's being staged
+- **Never commit**: `.env` files, API keys, `__pycache__`, `node_modules`, `.next/`, `qdrant_local_storage/`
+- **Tag releases**: Use `git tag -a vX.Y.Z -m "description"` for version milestones
+- **When user requests "上库/push/提交"**: Commit all pending changes and push to origin/main
 
 ## Technology Stack
 
