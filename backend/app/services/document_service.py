@@ -17,6 +17,7 @@ class DocumentService:
         status: DocumentStatus = DocumentStatus.UPLOADED,
         chunk_size: int | None = None,
         chunk_overlap: int | None = None,
+        is_pre_chunked: bool = False,
     ) -> Document:
         # Check for existing document with same (kb_id, doc_id) — if found, reset it
         existing = await self.get_by_doc_id_and_kb(doc_id, knowledge_base_id)
@@ -27,6 +28,7 @@ class DocumentService:
             existing.error_message = None
             existing.chunk_size = chunk_size
             existing.chunk_overlap = chunk_overlap
+            existing.is_pre_chunked = is_pre_chunked
             await self.session.commit()
             await self.session.refresh(existing)
             return existing
@@ -38,6 +40,7 @@ class DocumentService:
             status=status,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            is_pre_chunked=is_pre_chunked,
         )
         self.session.add(doc)
         await self.session.commit()

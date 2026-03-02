@@ -37,6 +37,7 @@ class Document(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     chunk_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     chunk_overlap: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_pre_chunked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     needs_vector_cleanup: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     progress_message: Mapped[str | None] = mapped_column(String(256), nullable=True)

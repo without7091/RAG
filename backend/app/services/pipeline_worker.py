@@ -118,6 +118,7 @@ class PipelineWorker:
                     doc.needs_vector_cleanup,
                     doc.chunk_size,
                     doc.chunk_overlap,
+                    doc.is_pre_chunked,
                 )
             )
             self._active_tasks.add(task)
@@ -132,6 +133,7 @@ class PipelineWorker:
         needs_vector_cleanup: bool,
         chunk_size: int | None,
         chunk_overlap: int | None,
+        is_pre_chunked: bool = False,
     ) -> None:
         """Acquire semaphore, run pipeline, release."""
         async with self._semaphore:
@@ -147,7 +149,7 @@ class PipelineWorker:
                     return
 
                 try:
-                    await self._run_single_pipeline(session, doc, None)
+                    await self._run_single_pipeline(session, doc, None, is_pre_chunked)
                 except Exception:
                     logger.exception("Pipeline wrapper failed for %s/%s", knowledge_base_id, doc_id)
                     try:
@@ -164,11 +166,13 @@ class PipelineWorker:
         session: AsyncSession,
         doc: Document,
         services_factory,
+        is_pre_chunked: bool = False,
     ) -> None:
         """Execute the pipeline for a single document.
 
         This method is the main integration point. It imports and assembles
-        the PipelineService with all required dependencies.
+        the PipelineService with all required dependencies. For pre-chunked
+        documents, it delegates to PreChunkPipelineService instead.
         """
         from app.config import get_settings
         from app.dependencies import (
@@ -197,6 +201,36 @@ class PipelineWorker:
             doc.needs_vector_cleanup = False
             await session.commit()
 
+        # Pre-chunked documents: use PreChunkPipelineService
+        if is_pre_chunked:
+            from app.services.prechunk_pipeline_service import PreChunkPipelineService
+
+            chunks_json_path = settings.upload_path / doc.knowledge_base_id / f"{doc.doc_id}_chunks.json"
+            if not chunks_json_path.exists():
+                await doc_svc.update_status(
+                    doc.doc_id, doc.knowledge_base_id, DocumentStatus.FAILED,
+                    error_message=f"Chunks JSON not found: {chunks_json_path}",
+                    progress_message=None,
+                )
+                return
+
+            pipeline = PreChunkPipelineService(
+                session=session,
+                embedding_service=get_embedding_service(),
+                sparse_embedding_service=get_sparse_embedding_service(),
+                vector_store_service=await get_vector_store_service(),
+                bm25_service=get_bm25_service(),
+            )
+
+            await pipeline.run_pipeline(
+                chunks_json_path=str(chunks_json_path),
+                doc_id=doc.doc_id,
+                file_name=doc.file_name,
+                knowledge_base_id=doc.knowledge_base_id,
+            )
+            return
+
+        # Standard pipeline: parse → chunk → embed → upsert
         file_path = settings.upload_path / doc.knowledge_base_id / doc.file_name
         if not file_path.exists():
             await doc_svc.update_status(

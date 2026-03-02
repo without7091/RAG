@@ -47,7 +47,7 @@ async def init_db(engine=None) -> None:
 
     # Migrate: add new columns if missing (SQLite ALTER TABLE)
     async with engine.begin() as conn:
-        for col in ("chunk_size INTEGER", "chunk_overlap INTEGER", "progress_message VARCHAR(256)", "needs_vector_cleanup BOOLEAN DEFAULT 0"):
+        for col in ("chunk_size INTEGER", "chunk_overlap INTEGER", "progress_message VARCHAR(256)", "needs_vector_cleanup BOOLEAN DEFAULT 0", "is_pre_chunked BOOLEAN DEFAULT 0"):
             try:
                 await conn.execute(text(f"ALTER TABLE documents ADD COLUMN {col}"))
             except Exception:

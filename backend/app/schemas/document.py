@@ -95,3 +95,29 @@ class DocSettingsResponse(BaseModel):
     doc_id: str
     chunk_size: int | None = None
     chunk_overlap: int | None = None
+
+
+# ─── Pre-chunked Upload ───
+
+class ChunkInput(BaseModel):
+    text: str = Field(..., min_length=1)
+    header_path: str = ""
+    header_level: int = Field(default=0, ge=0, le=6)
+    content_type: str = "text"
+    metadata: dict = Field(default_factory=dict)
+
+
+class UploadChunksRequest(BaseModel):
+    knowledge_base_id: str = Field(..., min_length=1)
+    file_name: str = Field(..., min_length=1)
+    chunks: list[ChunkInput] = Field(..., min_length=1)
+    doc_id: str | None = Field(default=None, description="Optional custom doc_id; auto-generated if null")
+
+
+class UploadChunksResponse(BaseModel):
+    doc_id: str
+    file_name: str
+    knowledge_base_id: str
+    status: DocumentStatus
+    chunk_count: int
+    is_pre_chunked: bool = True

@@ -1,3 +1,6 @@
+import hashlib
+import json
+
 import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -21,6 +24,8 @@ from app.schemas.document import (
     DocSettingsResponse,
     DocumentStatus,
     DocUploadResponse,
+    UploadChunksRequest,
+    UploadChunksResponse,
     VectorizeDocInfo,
     VectorizeRequest,
     VectorizeResponse,
@@ -82,6 +87,60 @@ async def upload_document(
         status=DocumentStatus.UPLOADED,
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
+    )
+
+
+@router.post("/upload-chunks", response_model=UploadChunksResponse)
+async def upload_chunks(
+    request: UploadChunksRequest,
+    kb_service: KBService = Depends(get_kb_service_dep),
+):
+    """Upload pre-chunked document as JSON.
+
+    Skips parsing and chunking — goes directly to embedding and upsert.
+    The document is queued for processing by the PipelineWorker.
+    """
+    # Validate KB exists
+    await kb_service.get_by_id(request.knowledge_base_id)
+
+    settings = get_settings()
+
+    # Generate or use provided doc_id
+    if request.doc_id:
+        doc_id = request.doc_id
+    else:
+        # Generate doc_id from concatenated chunk texts
+        combined = "".join(chunk.text for chunk in request.chunks)
+        doc_id = hashlib.sha256(combined.encode("utf-8")).hexdigest()[:32]
+
+    # Save chunks JSON to upload directory
+    upload_dir = settings.upload_path / request.knowledge_base_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    chunks_path = upload_dir / f"{doc_id}_chunks.json"
+
+    chunks_data = [chunk.model_dump() for chunk in request.chunks]
+    async with aiofiles.open(str(chunks_path), "w", encoding="utf-8") as f:
+        await f.write(json.dumps(chunks_data, ensure_ascii=False, indent=2))
+
+    # Create document record (status=PENDING, is_pre_chunked=True)
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        doc_service = DocumentService(session)
+        await doc_service.create(
+            doc_id,
+            request.file_name,
+            request.knowledge_base_id,
+            status=ModelDocumentStatus.PENDING,
+            is_pre_chunked=True,
+        )
+
+    return UploadChunksResponse(
+        doc_id=doc_id,
+        file_name=request.file_name,
+        knowledge_base_id=request.knowledge_base_id,
+        status=DocumentStatus.PENDING,
+        chunk_count=len(request.chunks),
+        is_pre_chunked=True,
     )
 
 
