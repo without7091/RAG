@@ -160,6 +160,7 @@ async def list_documents(
             chunk_count=d.chunk_count,
             chunk_size=d.chunk_size,
             chunk_overlap=d.chunk_overlap,
+            is_pre_chunked=d.is_pre_chunked,
             error_message=d.error_message,
             progress_message=d.progress_message,
             upload_timestamp=d.upload_timestamp,
@@ -268,8 +269,11 @@ async def vectorize_documents(
             if request.chunk_overlap is not None:
                 doc.chunk_overlap = request.chunk_overlap
 
-            # Verify file exists
-            file_path = settings.upload_path / request.knowledge_base_id / doc.file_name
+            # Verify file exists (pre-chunked docs use chunks JSON)
+            if doc.is_pre_chunked:
+                file_path = settings.upload_path / request.knowledge_base_id / f"{doc_id}_chunks.json"
+            else:
+                file_path = settings.upload_path / request.knowledge_base_id / doc.file_name
             if not file_path.exists():
                 raise HTTPException(
                     status_code=404,
@@ -312,7 +316,10 @@ async def retry_document(
         )
 
     settings = get_settings()
-    file_path = settings.upload_path / kb_id / doc.file_name
+    if doc.is_pre_chunked:
+        file_path = settings.upload_path / kb_id / f"{doc_id}_chunks.json"
+    else:
+        file_path = settings.upload_path / kb_id / doc.file_name
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Original file not found on disk")
 

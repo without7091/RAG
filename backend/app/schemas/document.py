@@ -32,6 +32,7 @@ class DocInfo(BaseModel):
     chunk_count: int = 0
     chunk_size: int | None = None
     chunk_overlap: int | None = None
+    is_pre_chunked: bool = False
     error_message: str | None = None
     progress_message: str | None = None
     upload_timestamp: datetime

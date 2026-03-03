@@ -86,6 +86,7 @@ export interface DocInfo {
   chunk_count: number;
   chunk_size: number | null;
   chunk_overlap: number | null;
+  is_pre_chunked: boolean;
   error_message: string | null;
   progress_message: string | null;
   upload_timestamp: string;
@@ -127,6 +128,38 @@ export async function uploadDocument(
     chunk_size: number | null;
     chunk_overlap: number | null;
   }>;
+}
+
+// ─── Pre-chunked Upload ───
+
+export interface ChunkInput {
+  text: string;
+  header_path?: string;
+  header_level?: number;
+  content_type?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UploadChunksPayload {
+  knowledge_base_id: string;
+  file_name: string;
+  chunks: ChunkInput[];
+}
+
+export interface UploadChunksResponse {
+  doc_id: string;
+  file_name: string;
+  knowledge_base_id: string;
+  status: DocumentStatus;
+  chunk_count: number;
+  is_pre_chunked: boolean;
+}
+
+export function uploadChunks(data: UploadChunksPayload) {
+  return request<UploadChunksResponse>("/document/upload-chunks", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
 }
 
 export function deleteDocument(kbId: string, docId: string) {

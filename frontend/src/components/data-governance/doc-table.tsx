@@ -253,8 +253,15 @@ export function DocTable({ kbId, docs, loading, onRefresh, onKbRefresh, onDocSta
                           aria-label={`选择 ${doc.file_name}`}
                         />
                       </TableCell>
-                      <TableCell className="font-medium max-w-[200px] truncate">
-                        {doc.file_name}
+                      <TableCell className="font-medium max-w-[200px]">
+                        <span className="truncate inline-block max-w-[170px] align-middle">
+                          {doc.file_name}
+                        </span>
+                        {doc.is_pre_chunked && (
+                          <Badge variant="outline" className="ml-1.5 text-[10px] px-1.5 py-0 border-blue-300 text-blue-600 bg-blue-50 align-middle">
+                            切片
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1.5 min-w-[160px]">
@@ -310,11 +317,14 @@ export function DocTable({ kbId, docs, loading, onRefresh, onKbRefresh, onDocSta
                                 size="sm"
                                 className="h-7 w-7 p-0"
                                 onClick={() => setSettingsDoc(doc)}
+                                disabled={doc.is_pre_chunked}
                               >
                                 <Settings className="h-3.5 w-3.5" />
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent>切分参数设置</TooltipContent>
+                            <TooltipContent>
+                              {doc.is_pre_chunked ? "切片文档无需切分参数" : "切分参数设置"}
+                            </TooltipContent>
                           </Tooltip>
 
                           {/* Vectorize */}
@@ -345,11 +355,14 @@ export function DocTable({ kbId, docs, loading, onRefresh, onKbRefresh, onDocSta
                                 size="sm"
                                 className="h-7 w-7 p-0"
                                 onClick={() => handleDownload(doc.doc_id)}
+                                disabled={doc.is_pre_chunked}
                               >
                                 <Download className="h-3.5 w-3.5" />
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent>下载原文件</TooltipContent>
+                            <TooltipContent>
+                              {doc.is_pre_chunked ? "切片文档无原始文件" : "下载原文件"}
+                            </TooltipContent>
                           </Tooltip>
 
                           {/* Delete */}
