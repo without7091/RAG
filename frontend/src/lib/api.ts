@@ -132,20 +132,6 @@ export async function uploadDocument(
 
 // ─── Pre-chunked Upload ───
 
-export interface ChunkInput {
-  text: string;
-  header_path?: string;
-  header_level?: number;
-  content_type?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface UploadChunksPayload {
-  knowledge_base_id: string;
-  file_name: string;
-  chunks: ChunkInput[];
-}
-
 export interface UploadChunksResponse {
   doc_id: string;
   file_name: string;
@@ -155,11 +141,19 @@ export interface UploadChunksResponse {
   is_pre_chunked: boolean;
 }
 
-export function uploadChunks(data: UploadChunksPayload) {
-  return request<UploadChunksResponse>("/document/upload-chunks", {
+export async function uploadChunks(kbId: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const params = new URLSearchParams({ knowledge_base_id: kbId });
+  const res = await fetch(`${BASE}/document/upload-chunks?${params}`, {
     method: "POST",
-    body: JSON.stringify(data),
+    body: form,
   });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(body.detail || `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<UploadChunksResponse>;
 }
 
 export function deleteDocument(kbId: string, docId: string) {

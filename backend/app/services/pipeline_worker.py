@@ -205,7 +205,7 @@ class PipelineWorker:
         if is_pre_chunked:
             from app.services.prechunk_pipeline_service import PreChunkPipelineService
 
-            chunks_json_path = settings.upload_path / doc.knowledge_base_id / f"{doc.doc_id}_chunks.json"
+            chunks_json_path = settings.upload_path / doc.knowledge_base_id / doc.file_name
             if not chunks_json_path.exists():
                 await doc_svc.update_status(
                     doc.doc_id, doc.knowledge_base_id, DocumentStatus.FAILED,

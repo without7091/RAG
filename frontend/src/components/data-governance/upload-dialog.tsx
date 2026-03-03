@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { uploadDocument, uploadChunks, type ChunkInput } from "@/lib/api";
+import { uploadDocument, uploadChunks } from "@/lib/api";
 import { Loader2, Upload, FileJson, ChevronDown, ChevronRight, AlertCircle, CheckCircle2 } from "lucide-react";
 
 const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".pptx", ".xlsx", ".md", ".txt"];
@@ -26,11 +26,9 @@ interface Props {
 interface ChunksValidation {
   valid: boolean;
   message: string;
-  chunks?: ChunkInput[];
-  fileName?: string;
 }
 
-function validateChunksJson(raw: string, fileName: string): ChunksValidation {
+function validateChunksJson(raw: string): ChunksValidation {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -62,23 +60,7 @@ function validateChunksJson(raw: string, fileName: string): ChunksValidation {
     }
   }
 
-  const chunks: ChunkInput[] = parsed.map((item: Record<string, unknown>) => ({
-    text: item.text as string,
-    ...(item.header_path != null && { header_path: String(item.header_path) }),
-    ...(item.header_level != null && { header_level: Number(item.header_level) }),
-    ...(item.content_type != null && { content_type: String(item.content_type) }),
-    ...(item.metadata != null && typeof item.metadata === "object" && { metadata: item.metadata as Record<string, unknown> }),
-  }));
-
-  // Derive file_name: remove .json extension
-  const derivedName = fileName.endsWith(".json") ? fileName.slice(0, -5) : fileName;
-
-  return {
-    valid: true,
-    message: `共 ${chunks.length} 个切片`,
-    chunks,
-    fileName: derivedName,
-  };
+  return { valid: true, message: `校验通过，共 ${parsed.length} 个切片` };
 }
 
 const PROTOCOL_EXAMPLE = `[
@@ -130,8 +112,7 @@ export function UploadDialog({ kbId, open, onOpenChange, onUploaded }: Props) {
     const reader = new FileReader();
     reader.onload = () => {
       const text = reader.result as string;
-      const result = validateChunksJson(text, file.name);
-      setChunksValidation(result);
+      setChunksValidation(validateChunksJson(text));
     };
     reader.onerror = () => {
       setChunksValidation({ valid: false, message: "文件读取失败" });
@@ -174,23 +155,19 @@ export function UploadDialog({ kbId, open, onOpenChange, onUploaded }: Props) {
   }
 
   async function handleChunksUpload() {
-    if (!chunksValidation?.valid || !chunksValidation.chunks || !chunksValidation.fileName) return;
+    if (!chunksFile || !chunksValidation?.valid) return;
     setUploading(true);
     try {
-      const r = await uploadChunks({
-        knowledge_base_id: kbId,
-        file_name: chunksValidation.fileName,
-        chunks: chunksValidation.chunks,
-      });
+      const r = await uploadChunks(kbId, chunksFile);
       setResults([{
-        name: chunksFile?.name || chunksValidation.fileName,
+        name: chunksFile.name,
         ok: true,
         msg: `已上传 ${r.chunk_count} 个切片 (doc_id: ${r.doc_id.slice(0, 8)}...)`,
       }]);
       onUploaded();
     } catch (err) {
       setResults([{
-        name: chunksFile?.name || chunksValidation.fileName,
+        name: chunksFile.name,
         ok: false,
         msg: (err as Error).message,
       }]);
@@ -221,7 +198,7 @@ export function UploadDialog({ kbId, open, onOpenChange, onUploaded }: Props) {
   const canUpload =
     mode === "file"
       ? files.length > 0
-      : chunksValidation?.valid === true;
+      : chunksFile != null && chunksValidation?.valid === true;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>

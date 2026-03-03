@@ -1,4 +1,3 @@
-import hashlib
 import json
 
 import aiofiles
@@ -24,7 +23,6 @@ from app.schemas.document import (
     DocSettingsResponse,
     DocumentStatus,
     DocUploadResponse,
-    UploadChunksRequest,
     UploadChunksResponse,
     VectorizeDocInfo,
     VectorizeRequest,
@@ -92,54 +90,80 @@ async def upload_document(
 
 @router.post("/upload-chunks", response_model=UploadChunksResponse)
 async def upload_chunks(
-    request: UploadChunksRequest,
+    knowledge_base_id: str,
+    file: UploadFile,
     kb_service: KBService = Depends(get_kb_service_dep),
 ):
-    """Upload pre-chunked document as JSON.
+    """Upload a pre-chunked JSON file as a document source.
 
-    Skips parsing and chunking — goes directly to embedding and upsert.
-    The document is queued for processing by the PipelineWorker.
+    The JSON file is validated, saved as the source file (same as normal upload),
+    and the document is marked as is_pre_chunked=True. The pipeline will skip
+    parsing and chunking, going directly to embedding and upsert.
+
+    Use POST /document/vectorize to start the vectorization pipeline.
     """
     # Validate KB exists
-    await kb_service.get_by_id(request.knowledge_base_id)
+    await kb_service.get_by_id(knowledge_base_id)
+
+    # Validate file extension
+    if not file.filename or not file.filename.lower().endswith(".json"):
+        raise HTTPException(status_code=400, detail="仅支持 .json 文件")
+
+    # Read and validate JSON structure
+    content = await file.read()
+    try:
+        chunks_data = json.loads(content.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(status_code=400, detail=f"JSON 解析失败: {e}")
+
+    if not isinstance(chunks_data, list):
+        raise HTTPException(status_code=400, detail="顶层结构必须为数组 []")
+    if len(chunks_data) == 0:
+        raise HTTPException(status_code=400, detail="切片数组不能为空")
+
+    for i, item in enumerate(chunks_data):
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail=f"第 {i + 1} 项不是有效对象")
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise HTTPException(status_code=400, detail=f"第 {i + 1} 项缺少非空 text 字段")
+        hl = item.get("header_level")
+        if hl is not None:
+            if not isinstance(hl, int) or hl < 0 or hl > 6:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"第 {i + 1} 项 header_level 必须为 0-6 整数",
+                )
 
     settings = get_settings()
 
-    # Generate or use provided doc_id
-    if request.doc_id:
-        doc_id = request.doc_id
-    else:
-        # Generate doc_id from concatenated chunk texts
-        combined = "".join(chunk.text for chunk in request.chunks)
-        doc_id = hashlib.sha256(combined.encode("utf-8")).hexdigest()[:32]
+    # Generate doc_id from file content
+    doc_id = generate_doc_id(content)
 
-    # Save chunks JSON to upload directory
-    upload_dir = settings.upload_path / request.knowledge_base_id
+    # Save JSON file as source (same pattern as normal upload)
+    upload_dir = settings.upload_path / knowledge_base_id
     upload_dir.mkdir(parents=True, exist_ok=True)
-    chunks_path = upload_dir / f"{doc_id}_chunks.json"
+    file_path = upload_dir / file.filename
+    async with aiofiles.open(str(file_path), "wb") as f:
+        await f.write(content)
 
-    chunks_data = [chunk.model_dump() for chunk in request.chunks]
-    async with aiofiles.open(str(chunks_path), "w", encoding="utf-8") as f:
-        await f.write(json.dumps(chunks_data, ensure_ascii=False, indent=2))
-
-    # Create document record (status=PENDING, is_pre_chunked=True)
+    # Create document record (status=UPLOADED, is_pre_chunked=True)
     session_factory = get_session_factory()
     async with session_factory() as session:
         doc_service = DocumentService(session)
         await doc_service.create(
             doc_id,
-            request.file_name,
-            request.knowledge_base_id,
-            status=ModelDocumentStatus.PENDING,
+            file.filename,
+            knowledge_base_id,
             is_pre_chunked=True,
         )
 
     return UploadChunksResponse(
         doc_id=doc_id,
-        file_name=request.file_name,
-        knowledge_base_id=request.knowledge_base_id,
-        status=DocumentStatus.PENDING,
-        chunk_count=len(request.chunks),
+        file_name=file.filename,
+        knowledge_base_id=knowledge_base_id,
+        status=DocumentStatus.UPLOADED,
+        chunk_count=len(chunks_data),
         is_pre_chunked=True,
     )
 
@@ -269,11 +293,8 @@ async def vectorize_documents(
             if request.chunk_overlap is not None:
                 doc.chunk_overlap = request.chunk_overlap
 
-            # Verify file exists (pre-chunked docs use chunks JSON)
-            if doc.is_pre_chunked:
-                file_path = settings.upload_path / request.knowledge_base_id / f"{doc_id}_chunks.json"
-            else:
-                file_path = settings.upload_path / request.knowledge_base_id / doc.file_name
+            # Verify source file exists
+            file_path = settings.upload_path / request.knowledge_base_id / doc.file_name
             if not file_path.exists():
                 raise HTTPException(
                     status_code=404,
@@ -316,10 +337,7 @@ async def retry_document(
         )
 
     settings = get_settings()
-    if doc.is_pre_chunked:
-        file_path = settings.upload_path / kb_id / f"{doc_id}_chunks.json"
-    else:
-        file_path = settings.upload_path / kb_id / doc.file_name
+    file_path = settings.upload_path / kb_id / doc.file_name
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Original file not found on disk")
 

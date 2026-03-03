@@ -355,13 +355,12 @@ export function DocTable({ kbId, docs, loading, onRefresh, onKbRefresh, onDocSta
                                 size="sm"
                                 className="h-7 w-7 p-0"
                                 onClick={() => handleDownload(doc.doc_id)}
-                                disabled={doc.is_pre_chunked}
                               >
                                 <Download className="h-3.5 w-3.5" />
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                              {doc.is_pre_chunked ? "切片文档无原始文件" : "下载原文件"}
+                              {doc.is_pre_chunked ? "下载切片源文件" : "下载原文件"}
                             </TooltipContent>
                           </Tooltip>
 
