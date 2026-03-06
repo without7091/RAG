@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { uploadDocument, uploadChunks } from "@/lib/api";
-import { Loader2, Upload, FileJson, ChevronDown, ChevronRight, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Loader2, Upload, FileJson, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Download } from "lucide-react";
 
 const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".pptx", ".xlsx", ".md", ".txt"];
 
@@ -314,18 +314,29 @@ export function UploadDialog({ kbId, open, onOpenChange, onUploaded }: Props) {
 
               {/* Protocol hint */}
               <div className="border rounded-md">
-                <button
-                  type="button"
-                  className="flex items-center gap-1.5 w-full px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  onClick={() => setShowProtocol(!showProtocol)}
-                >
-                  {showProtocol ? (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  )}
-                  切片协议说明
-                </button>
+                <div className="flex items-center">
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 flex-1 px-3 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    onClick={() => setShowProtocol(!showProtocol)}
+                  >
+                    {showProtocol ? (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    )}
+                    切片协议说明
+                  </button>
+                  <a
+                    href="/api/v1/document/chunk-template"
+                    download="chunk_template.py"
+                    className="flex items-center gap-1 px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    title="下载生成脚本 chunk_template.py"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    下载生成脚本
+                  </a>
+                </div>
                 {showProtocol && (
                   <pre className="px-3 pb-3 text-xs text-muted-foreground overflow-auto max-h-48 whitespace-pre-wrap font-mono">
                     {PROTOCOL_EXAMPLE}

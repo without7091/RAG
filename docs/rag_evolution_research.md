@@ -1,9 +1,9 @@
 # RAG 技术演进前沿研究报告
 
-> **版本**: V1.0
-> **日期**: 2026-03-03
+> **版本**: V2.0
+> **日期**: 2026-03-04（V1.0: 2026-03-03）
 > **定位**: 技术前沿调研，为 V2.x → V3.0 → V4.0+ 演进路线提供技术储备
-> **范围**: PageIndex、Agentic RAG、GraphRAG、业界架构趋势、平台演进启示
+> **范围**: PageIndex、Agentic RAG、GraphRAG、业界架构趋势、平台演进启示、**RAG 评测体系（V2.0 新增）**
 
 ---
 
@@ -40,7 +40,496 @@
   - [5.3 V3.0 智能化路线](#53-v30-智能化路线)
   - [5.4 V4.0+ 多模态与规模化路线](#54-v40-多模态与规模化路线)
   - [5.5 技术选型决策矩阵](#55-技术选型决策矩阵)
+- [6. RAG 评测体系（V2.0 新增）](#6-rag-评测体系v20-新增)
+  - [6.1 主流 RAG 评测框架全景](#61-主流-rag-评测框架全景)
+  - [6.2 纯检索核心指标体系](#62-纯检索核心指标体系)
+  - [6.3 纯检索评测的学术基准](#63-纯检索评测的学术基准)
+  - [6.4 离线评测 vs 在线评测方法论](#64-离线评测-vs-在线评测方法论)
+  - [6.5 评测数据集构建方法](#65-评测数据集构建方法)
+  - [6.6 Hybrid Search 效果量化评估](#66-hybrid-search-效果量化评估)
+  - [6.7 2025 年评测趋势](#67-2025-年评测趋势)
+  - [6.8 v3.0.0 评测体系落地方案](#68-v300-评测体系落地方案)
 - [参考文献](#参考文献)
+
+---
+
+## 6. RAG 评测体系（V2.0 新增）
+
+> **调研背景**：v3.0.0 演进计划将评测体系列为 P0 优先级。本章对市面上的 RAG 评测框架、指标体系、数据集构建方法和 Hybrid Search 量化评估进行深度调研，结合本项目（纯检索中台，无 LLM 生成）给出具体落地方案。
+
+### 6.1 主流 RAG 评测框架全景
+
+#### 框架能力对比
+
+| 框架 | 核心定位 | 是否需要 LLM Judge | 纯检索支持 | CI/CD 集成 | 开源 |
+|---|---|---|---|---|---|
+| **RAGAS** | 参考基准评价套件 | 可选（有非 LLM 指标） | 部分支持 | 有限 | 是 |
+| **TruLens** | 生产监控 + 追踪 | 是 | 否 | 是（OpenTelemetry） | 是 |
+| **DeepEval** | 开发者友好单元测试 | 是 | 否 | 完整 CI/CD | 是 |
+| **ARES** | 研究级统计评估 | 用 fine-tuned 分类器 | 是 | 否 | 是 |
+| **Evidently AI** | 生产漂移监控 | 可选 | 是 | 是 | 是 |
+
+#### RAGAS
+
+RAGAS 是目前**生态集成度最高**的框架，支持 LangChain 和 LlamaIndex，提供**无参考（reference-free）评价能力**。与本项目直接相关的是其非 LLM 指标子集：
+
+```
+RAGAS 非 LLM 指标（适合纯检索系统）：
+  ContextEntityRecall     # 实体级召回，无需 LLM
+  NonLLMStringSimilarity  # 字符串相似度
+  BleuScore / RougeScore  # 文本重叠
+  ExactMatch              # 精确匹配
+```
+
+#### DeepEval
+
+以**软件工程**思维构建评测体系，像写 Pytest 单元测试一样写 LLM 评估。区别于 RAGAS 的关键：指标结果**可调试**——内嵌 LLM Judge 的推理过程，帮助定位低分原因。完整支持 CI/CD 集成。
+
+#### ARES
+
+不使用通用 LLM 作为 Judge，而是基于合成数据**训练专用分类器**，输出具有统计置信度的分数。适合对评测可靠性要求极高的研究场景。
+
+**关键结论**：对于本项目（纯检索中台，无 LLM 生成），上述框架的核心指标（Faithfulness、Answer Relevancy 等）**全部不适用**。正确的评测范式是**信息检索（IR）评测**。
+
+---
+
+### 6.2 纯检索核心指标体系
+
+#### 指标分类
+
+```
+检索指标
+├── 二元相关性（Binary Relevance）
+│   ├── Precision@K    — Top-K 中相关 chunk 的占比
+│   ├── Recall@K       — 全部相关 chunk 中被召回的比例
+│   ├── F1@K           — Precision 与 Recall 的调和均值
+│   └── Hit Rate@K     — 至少命中 1 个相关结果的查询比例
+└── 排序感知（Rank-Aware）
+    ├── MRR            — 首个相关结果排名的倒数均值
+    ├── MAP            — 多相关文档的综合排名质量
+    └── NDCG@K         — 考虑排名位置的折扣累积增益（MTEB 主指标）
+```
+
+#### Precision@K
+
+```
+Precision@K = |{相关文档} ∩ {Top-K 结果}| / K
+```
+
+示例：`[相关, 不相关, 相关, 相关, 不相关]` → Precision@5 = 3/5 = 0.60
+
+**意义**：Precision@K 低意味着下游应用需要从大量无关上下文中筛选，增加噪声。
+
+#### Recall@K
+
+```
+Recall@K = |{相关文档} ∩ {Top-K 结果}| / |{所有相关文档}|
+```
+
+示例：全集中共 4 个相关文档，Top-5 检索到 3 个 → Recall@5 = 3/4 = 0.75
+
+**注意**：Recall@K 是非排序感知指标，只关心"是否找到"，不关心排名。
+
+#### Hit Rate@K
+
+```
+Hit Rate@K = |{查询 q : ∃ 相关文档 ∈ Top-K(q)}| / |{所有测试查询}|
+```
+
+示例：100 个查询中，92 个在 Top-10 内命中至少 1 个相关文档 → Hit Rate@10 = 0.92
+
+**业界基准目标**：FAQ 类系统 Hit Rate@10 > 90%；通用知识库 Hit Rate@5 > 85%。
+
+#### MRR（Mean Reciprocal Rank）
+
+```
+MRR = (1/|Q|) × Σ [1 / rank_q]
+（rank_q 为查询 q 结果中第一个相关文档的排名，未命中则贡献 0）
+```
+
+示例：
+```
+查询1: 相关文档在第1位 → 1/1 = 1.00
+查询2: 相关文档在第3位 → 1/3 = 0.33
+查询3: 相关文档在第2位 → 1/2 = 0.50
+MRR = (1.00 + 0.33 + 0.50) / 3 = 0.61
+```
+
+**意义**：MRR 高意味着最相关上下文排在 context window 前列，降低"迷失在中间（lost-in-the-middle）"问题的影响。
+
+#### NDCG@K（Normalized Discounted Cumulative Gain）
+
+MTEB 排行榜的默认主指标，考虑相关性程度和排名位置。
+
+```
+Step 1 — DCG@K = Σ(i=1 to K) [rel_i / log2(i + 1)]
+Step 2 — IDCG@K = 理想排序下的 DCG@K（相关文档完美排前）
+Step 3 — NDCG@K = DCG@K / IDCG@K
+```
+
+示例（二元相关性）：
+```
+结果：[相关(1), 不相关(0), 相关(1), 相关(1), 不相关(0)]
+DCG@5 = 1/log2(2) + 0 + 1/log2(4) + 1/log2(5) + 0 = 1.000 + 0.500 + 0.431 = 1.931
+IDCG@5（理想: [1,1,1,0,0]）= 1.000 + 0.631 + 0.500 = 2.131
+NDCG@5 = 1.931 / 2.131 ≈ 0.906
+```
+
+**业界基准**：NDCG@10 > 0.80 为优秀检索系统。
+
+#### 本项目最小可行指标集（v3.0.0 初期）
+
+> 调研建议：初期只追 3 个主指标，避免指标过多导致没有焦点。
+
+| 指标 | 优先级 | 关注点 |
+|------|--------|--------|
+| **Hit Rate@5** | 主 | 系统级可用性，最直观 |
+| **Recall@10** | 主 | 召回能力，最重要 |
+| **NDCG@10** | 主 | 排序质量，有 Reranker 时必须看 |
+| MRR | 辅 | 首相关结果排名 |
+| Precision@5 | 辅 | 返回结果精度 |
+
+---
+
+### 6.3 纯检索评测的学术基准
+
+#### BEIR（Benchmarking Information Retrieval）
+
+纯检索评测的**学术黄金标准**：
+- 18 个多样化数据集（QA、事实核查、生物医学、法律等）
+- 主指标：**NDCG@10**
+- 2025 年发布 BEIR 2.0，增加对抗性查询和域偏移场景
+
+#### MTEB（Massive Text Embedding Benchmark）
+
+- HuggingFace 托管，涵盖 8 类任务、58 个数据集、112 种语言
+- 2025 年新增 **RTEB**（Retrieval-specific TEB），使用私有数据集防止测试集污染
+
+#### NVIDIA 企业级检索评测建议
+
+| 场景 | 推荐主指标 | 原因 |
+|---|---|---|
+| context window < 4K tokens | **Recall@K** | LLM 对排序不敏感，召回更重要 |
+| context window > 4K tokens | **NDCG@K** | 排序影响 LLM 利用效率（lost-in-middle 问题） |
+| 大量 chunk 并行检索 | **NDCG@K** | 需要最相关的 chunk 排在最前面 |
+
+建议**不使用全集 BEIR 平均分**，而是选择与业务场景最接近的子集（如 HotpotQA、NaturalQuestions、FiQA）进行评估。
+
+---
+
+### 6.4 离线评测 vs 在线评测方法论
+
+#### 双轨评测体系
+
+```
+评测体系
+├── 离线评测（Offline Evaluation）
+│   ├── 目标：开发阶段质量基准、版本回归测试
+│   ├── 数据：预构建评测集（golden dataset）
+│   └── 频率：每次代码变更、模型升级时触发
+└── 在线评测（Online Evaluation）
+    ├── 目标：生产环境持续监控、分布漂移检测
+    ├── 数据：真实用户查询流量
+    └── 频率：持续采样 + 每周至少一次批量评测
+```
+
+#### 离线评测核心流程
+
+```python
+def evaluate_retriever_offline(retriever, eval_dataset, k_values=[5, 10, 20]):
+    """
+    eval_dataset: [{"query": str, "relevant_doc_ids": [str]}]
+    """
+    import math
+
+    results = {f"hit_rate@{k}": [] for k in k_values}
+    results.update({f"recall@{k}": [] for k in k_values})
+    results.update({f"ndcg@{k}": [] for k in k_values})
+    results["mrr"] = []
+
+    for sample in eval_dataset:
+        query = sample["query"]
+        relevant_ids = set(sample["relevant_doc_ids"])
+        retrieved_ids = retriever.retrieve(query, top_k=max(k_values))
+
+        for k in k_values:
+            top_k = set(retrieved_ids[:k])
+            results[f"hit_rate@{k}"].append(1 if top_k & relevant_ids else 0)
+            results[f"recall@{k}"].append(len(top_k & relevant_ids) / len(relevant_ids))
+            dcg = sum(1/math.log2(i+2) for i, d in enumerate(retrieved_ids[:k]) if d in relevant_ids)
+            idcg = sum(1/math.log2(i+2) for i in range(min(len(relevant_ids), k)))
+            results[f"ndcg@{k}"].append(dcg / idcg if idcg > 0 else 0)
+
+        for rank, doc_id in enumerate(retrieved_ids, start=1):
+            if doc_id in relevant_ids:
+                results["mrr"].append(1 / rank)
+                break
+        else:
+            results["mrr"].append(0)
+
+    return {k: sum(v)/len(v) for k, v in results.items()}
+```
+
+#### 在线监控指标（无需 ground truth）
+
+```
+在线可监控指标：
+1. 检索延迟分位数（p50 / p95 / p99）
+2. 空结果率（检索返回 0 个结果的查询比例）
+3. 低相关性率（所有 chunk 得分低于阈值的查询比例）
+4. 查询分布漂移（新查询类型出现频率）
+5. 知识库覆盖盲点（高频无法匹配的查询模式）
+```
+
+**触发式告警建议**：
+- 空结果率 > 5% → 知识库可能有问题
+- p95 延迟 > 2s → 检索性能劣化
+- 周环比主指标下降 > 10% → 定向排查
+
+#### A/B Testing 方法
+
+```
+典型对比实验设计：
+- 实验组：新检索策略（调整 dense/sparse 权重、新 reranker 等）
+- 对照组：当前生产策略
+- 流量分配：90% 对照 / 10% 实验（逐步放量）
+- 关键指标：NDCG@10、Hit Rate@5、p95 延迟
+- 统计显著性：需达到 p < 0.05，建议至少累积 1000 次查询
+```
+
+---
+
+### 6.5 评测数据集构建方法
+
+#### 构建原则
+
+```
+黄金评测集（Golden Dataset）要求：
+1. 覆盖真实用户查询类型
+2. 覆盖知识库中的主要文档/话题（避免偏向某类文档）
+3. 每个查询有明确的 ground truth 文档 ID 列表
+4. 人工审核 + 自动质量过滤双重保障
+5. 规模建议：≥200 个查询对（小规模），≥1000 个（生产级）
+```
+
+#### 查询类型分布（RAGEval ACL 2025 建议）
+
+| 类型 | 建议比例 | 示例 |
+|------|---------|------|
+| 单跳事实型 | 40% | "X 的 Y 是什么？" |
+| 多跳推理型 | 20% | "A 与 B 的关系是？" |
+| 摘要型 | 20% | "总结 X 的主要特点" |
+| 推理型 | 10% | "为什么 X 导致 Y？" |
+| **不可答型** | 10% | 知识库中没有答案的问题 |
+
+> **不可答型（10%）尤为关键**：用来评测系统是否会在没有相关内容时"乱返回"，直接检验 min_score 阈值和空结果处理逻辑。
+
+#### 合成数据生成标准流程（2025 年最佳实践）
+
+```
+Step 1：文档预处理
+  → 将知识库文档按 chunk 切分，提取主题/实体/关键概念
+
+Step 2：问题生成（LLM 驱动）
+  → 对每个 chunk，让 LLM 生成 1-3 个能被该 chunk 回答的问题
+  → 问题类型多样化：事实型、推理型、对比型、摘要型
+
+Step 3：问题进化（Query Evolution）
+  → 简单问题 → 多跳复杂问题
+  → 短问题 → 完整自然语言问题
+  → 不同表达方式的同义改写（含简称/全称变换）
+
+Step 4：质量过滤
+  → Round-trip 一致性检查：用生成的答案再检索，验证能否找回原 chunk
+  → Answerability 过滤：去除从 chunk 无法回答的问题
+  → 人工抽样审核（建议 10% 样本）
+```
+
+#### 基于本项目技术栈的实现（LlamaIndex + SiliconFlow）
+
+```python
+# 直接复用项目已有依赖，不需要新增外部工具
+from llama_index.core.evaluation import DatasetGenerator
+from llama_index.llms.openai_like import OpenAILike
+
+llm = OpenAILike(
+    model="Qwen/Qwen3-8B-Instruct",
+    api_base="https://api.siliconflow.cn/v1",
+    api_key="YOUR_API_KEY",
+    is_chat_model=True,
+)
+
+generator = DatasetGenerator.from_documents(
+    documents,
+    llm=llm,
+    num_questions_per_chunk=2,
+    question_gen_query=(
+        "你是一位知识库测试专家。"
+        "请根据以下文档内容生成一个中文测试问题，"
+        "该问题必须能且只能从文档内容中找到答案，"
+        "并且尽可能接近真实用户的提问方式。"
+        "问题："
+    )
+)
+```
+
+#### 中文特定注意事项
+
+- 使用 Qwen3 系列模型生成中文问题，语言风格更贴近真实用户
+- 注意中文分词对 BM25/BM42 稀疏检索的影响（jieba 分词 vs 字符级别）
+- 覆盖全角/半角混用、简称/全称变换等中文特有查询变体
+
+---
+
+### 6.6 Hybrid Search 效果量化评估
+
+#### 对比实验矩阵
+
+```
+基线方案：
+  A. Dense Only（仅 Qwen3-Embedding 向量检索）
+  B. Sparse Only（仅 BM42 稀疏检索）
+  B'. Sparse Only（传统 BM25，作为 BM42 的对比组）← 必须加
+
+实验方案：
+  C. Hybrid A+B（Dense + BM42，RRF 融合）
+  D. Hybrid A+B'（Dense + BM25，作为对比）
+  E. Hybrid + Reranker（当前生产方案）← 期望最优
+
+评测指标：
+  主指标：NDCG@10, Recall@5, Hit Rate@10
+  副指标：MRR, Precision@5
+  性能指标：p95 延迟（ms）
+```
+
+> **BM42 重要提示**：Qdrant 在 2024 年已修正了 BM42 评测脚本的错误。最新研究（Uppsala 大学 2025 年）表明：**BM42 独立性能弱于传统 BM25**，仅在与 Dense 融合时有轻微提升。本项目的评测矩阵需要专门对比 B vs B'，用数据说话而不是假设 BM42 一定更好。
+
+#### 融合策略对比
+
+**RRF（Reciprocal Rank Fusion，本项目当前方案）**：
+```python
+def rrf_score(ranks: list[int], k: int = 60) -> float:
+    # k=60 是业界最常用默认值，对结果不敏感
+    return sum(1 / (k + rank) for rank in ranks)
+```
+
+**加权融合（Alpha 参数调优）**：
+```python
+def hybrid_score(dense_score, sparse_score, alpha=0.5):
+    # alpha=1.0: 纯 dense；alpha=0.0: 纯 sparse
+    # 需先对两路分数做 Min-Max 归一化
+    return alpha * dense_score + (1 - alpha) * sparse_score
+```
+
+Alpha 最优值通过 Grid Search 在评测集上确定（候选值：0.1, 0.2, ..., 0.9），以 NDCG@10 为目标指标。
+
+#### 业界 2025 年基准数据
+
+| 检索方法 | Recall@5 | NDCG@10 | 说明 |
+|---|---|---|---|
+| BM25 alone | ~0.72 | 43.4 | BEIR 平均 |
+| Dense (OpenAI-level) | ~0.85 | ~48.7 | NQ 数据集 |
+| Hybrid (BM25+Dense) | ~0.91 | >52.6 | BEIR 平均，+2~7.5pp |
+| Hybrid + Reranker | ~0.91 | >55.0 | 本项目当前方案 |
+| BM42 alone | < BM25 | < BM25 | 实验性，独立性能较弱 |
+| Hybrid (BM42+Dense) | 轻微优于 BM25+Dense | 轻微优于 | Uppsala 大学 2025 |
+| SPLADE+Dense | 最强 | 最强 | 计算成本高，不适合低延迟 |
+
+**关键结论（2025 年）**：
+1. Hybrid 检索相比单一方法，Recall 提升约 20~27%，NDCG 提升约 5~20 点
+2. BM42 目前**不建议作为 BM25 的直接替代品**
+3. 动态加权 RRF（根据查询特异性调整权重）比固定权重高出 2~7.5pp
+
+---
+
+### 6.7 2025 年评测趋势
+
+#### LLM-as-Judge 规模化应用
+
+2025 年下半年使用 LLM-based 评测方法的研究论文数量达历史新高，但**传统 IR 指标仍占主导**。关键进展：
+
+- **专用 Judge 模型**：Lynx、Glider 等专为 RAG 评测 fine-tuned 的 Judge，比通用 LLM（GPT-4）在检测幻觉和上下文相关性上更稳定
+- **可解释性要求**：DeepEval 等框架要求 LLM Judge 输出推理过程，不只给出分数
+
+#### Component-Level 精细化评测
+
+从端到端黑盒评测转向**组件级白盒评测**：
+
+```
+细粒度评测层次：
+├── Chunk 级别：单个 retrieved chunk 的相关性
+├── 文档级别：检索到的文档整体质量
+├── 排序级别：Top-K 结果的排序质量（NDCG）
+├── 召回级别：关键信息是否遗漏（Recall）
+└── 端到端级别：最终用户查询满足度
+```
+
+#### 超越 NDCG 的新指标探索
+
+一项重要研究（arXiv:2510.21440）发现：传统 IR 指标（nDCG、MAP、MRR）与 RAG 端到端质量的**相关性仅约 60%**，无法完全预测 RAG 性能。提出的替代/补充指标：
+
+| 新指标 | 核心思想 | 现状 |
+|---|---|---|
+| **UDCG**（Utility-DCG） | 考虑文档在 LLM 推理中的实际效用 | 学术阶段，Spearman 相关性提升 36% |
+| **alpha-NDCG** | 惩罚重复覆盖相同信息点的文档 | 用于多样性评测 |
+| **Chunk Attribution** | 追踪最终答案中每个 claim 对应的 chunk 来源 | Galileo 等平台已商业化 |
+
+#### 持续评测（Continuous Evaluation）成为标准
+
+```
+触发式评测：
+  代码变更 → CI/CD 自动跑离线测试集
+  模型升级 → 全量回归测试
+  知识库大批量更新 → 立即评测覆盖率变化
+
+定期批量评测：
+  每日：关键指标 dashboard 更新
+  每周：对生产流量采样评测
+  每月：全量评测集跑一次
+```
+
+---
+
+### 6.8 v3.0.0 评测体系落地方案
+
+基于以上调研，针对本项目的**最小可行评测体系**：
+
+#### 第一阶段（v3.0.0-alpha）：建立离线评测基线
+
+```
+1. 构建评测集
+   - 从知识库中抽取 200-500 个文档 chunk
+   - 用 Qwen3-8B-Instruct（SiliconFlow API）生成每个 chunk 对应的测试问题
+   - 人工审核 10% 样本，验证质量
+   - 数据格式：{query, relevant_doc_ids, relevant_chunk_ids}
+   - 查询类型按 40/20/20/10/10 分布构造
+
+2. 核心对比实验
+   A. Dense Only（Qwen3-Embedding）
+   B. Sparse Only（BM42）
+   B'. Sparse Only（传统 BM25，对比组）
+   C. Hybrid A+B（RRF，当前方案）
+   D. Hybrid + Reranker（当前生产默认）
+
+3. 主指标：Hit Rate@5, Recall@10, NDCG@10
+```
+
+#### 第二阶段（v3.0.0-beta）：在线查询日志
+
+```sql
+-- 新增 query_logs 表
+query_logs (
+    id, kb_id, query,
+    top_k, reranker_enabled,
+    result_doc_ids,   -- JSON list
+    result_scores,    -- JSON list
+    latency_ms,
+    user_feedback,    -- null / "positive" / "negative"
+    created_at
+)
+```
+
+Playground 页面加轻量反馈（👍/👎），低分 case 自动推送到评测集待标注队列。
 
 ---
 
@@ -665,6 +1154,22 @@ V4.0 面向长期演进，引入**多模态索引**和**高级检索范式**：
 
 ## 参考文献
 
+### RAG 评测体系（V2.0 新增）
+
+29. Shahul Es et al. (2023). *RAGAS: Automated Evaluation of Retrieval Augmented Generation*. arXiv:2309.15217. https://arxiv.org/abs/2309.15217
+30. Hao Yu et al. (2024). *Evaluation of Retrieval-Augmented Generation: A Survey*. https://arxiv.org/html/2504.14891v1
+31. Aoran Gan et al. (2025). *RAG Evaluation in the Era of Large Language Models*. arXiv:2504.14891.
+32. Weaviate. *Evaluation Metrics for Search and Recommendation Systems*. https://weaviate.io/blog/retrieval-evaluation-metrics
+33. NVIDIA. *Evaluating Retriever for Enterprise-Grade RAG*. https://developer.nvidia.com/blog/evaluating-retriever-for-enterprise-grade-rag/
+34. Uppsala University (2025). *BM42 vs. Conventional Methods: Evaluating Next-Generation Hybrid Search*. https://uu.diva-portal.org/smash/record.jsf?pid=diva2:1979031
+35. Qdrant. *BM42: New Baseline for Hybrid Search*. https://qdrant.tech/articles/bm42/
+36. RAGEval (ACL 2025). *Scenario Specific RAG Evaluation Dataset Generation Framework*. https://aclanthology.org/2025.acl-long.418/
+37. Red Hat Developer (2026). *Synthetic data for RAG evaluation*. https://developers.redhat.com/articles/2026/02/23/synthetic-data-rag-evaluation-why-your-rag-system-needs-better-testing
+38. arXiv:2510.21440. *Redefining Retrieval Evaluation in the Era of LLMs*. https://arxiv.org/html/2510.21440v1
+39. arXiv:2508.18929. *Diverse And Private Synthetic Datasets Generation for RAG Evaluation*. https://arxiv.org/html/2508.18929
+40. BEIR Benchmark. https://github.com/beir-cellar/beir
+41. Evidently AI. *A complete guide to RAG evaluation*. https://www.evidentlyai.com/llm-guide/rag-evaluation
+
 ### PageIndex / ColPali / Late Interaction
 
 1. Faysse, M. et al. (2024). *ColPali: Efficient Document Retrieval with Vision Language Models*. arXiv:2407.01449. ICLR 2025. https://arxiv.org/abs/2407.01449
@@ -716,5 +1221,5 @@ V4.0 面向长期演进，引入**多模态索引**和**高级检索范式**：
 
 ---
 
-> **文档状态**: 初始版本完成
-> **下次更新计划**: 根据 V2.x 实验结果更新 Late Chunking 和 CRAG 章节的实测数据
+> **文档状态**: V2.0 完成（新增第 6 章：RAG 评测体系）
+> **下次更新计划**: 根据 V2.x 实验结果更新 Late Chunking 和 CRAG 章节的实测数据；根据 v3.0.0 评测体系实施进展更新第 6.8 节

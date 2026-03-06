@@ -1,0 +1,32 @@
+[
+  {
+    "text": "RAG（检索增强生成）是一种结合信息检索与大语言模型的技术架构。它通过从知识库中检索相关文档片段，将其作为上下文提供给 LLM，从而生成更准确、更有依据的回答。",
+    "header_path": "RAG 概述",
+    "header_level": 1,
+    "content_type": "text"
+  },
+  {
+    "text": "向量检索是 RAG 系统的核心组件。文档首先被切分为语义完整的片段，然后通过嵌入模型转换为高维向量。查询时，用户问题同样被向量化，通过余弦相似度或点积计算找到最相关的文档片段。",
+    "header_path": "RAG 概述 > 向量检索",
+    "header_level": 2,
+    "content_type": "text"
+  },
+  {
+    "text": "混合检索结合了稠密向量检索和稀疏向量检索（如 BM25）的优势。稠密检索擅长语义匹配，稀疏检索擅长关键词精确匹配。两者融合后，检索召回率和准确率均显著提升。",
+    "header_path": "RAG 概述 > 混合检索",
+    "header_level": 2,
+    "content_type": "text"
+  },
+  {
+    "text": "Reranker 是检索后的精排模块。初始检索返回 Top-K 候选文档后，Reranker 使用交叉编码器对 query-document 对进行精细打分，重新排序后取 Top-N 作为最终结果，显著提高检索精度。",
+    "header_path": "RAG 概述 > Reranker 精排",
+    "header_level": 2,
+    "content_type": "text"
+  },
+  {
+    "text": "文档切分策略直接影响检索质量。常见方法包括：固定长度切分、基于标题结构的语义切分、滑动窗口切分等。好的切分应保持语义完整性，避免将一个概念拆分到多个片段中。",
+    "header_path": "RAG 概述 > 切分策略",
+    "header_level": 2,
+    "content_type": "text"
+  }
+]

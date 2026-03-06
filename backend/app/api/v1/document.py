@@ -168,6 +168,20 @@ async def upload_chunks(
     )
 
 
+@router.get("/chunk-template")
+async def download_chunk_template():
+    """Download the pre-chunked JSON generator template script."""
+    from pathlib import Path
+    template_path = Path(__file__).parents[4] / "docs" / "chunk_template.py"
+    if not template_path.exists():
+        raise HTTPException(status_code=404, detail="模板文件不存在")
+    return FileResponse(
+        path=str(template_path),
+        filename="chunk_template.py",
+        media_type="text/x-python",
+    )
+
+
 @router.get("/list/{kb_id}", response_model=DocListResponse)
 async def list_documents(
     kb_id: str,
