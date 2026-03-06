@@ -86,10 +86,25 @@ class VectorStoreService:
         if not dense_vectors:
             return
 
+        dense_count = len(dense_vectors)
+        sparse_count = len(sparse_vectors)
+        payload_count = len(payloads)
+        if dense_count != sparse_count or dense_count != payload_count:
+            raise VectorStoreError(
+                "Length mismatch among dense_vectors, sparse_vectors, and payloads "
+                f"({dense_count}, {sparse_count}, {payload_count})"
+            )
+        if bm25_vectors is not None and len(bm25_vectors) != dense_count:
+            raise VectorStoreError(
+                "Length mismatch between bm25_vectors and dense_vectors "
+                f"({len(bm25_vectors)}, {dense_count})"
+            )
+
         points = []
-        for i, (dense, sparse, payload) in enumerate(
-            zip(dense_vectors, sparse_vectors, payloads)
-        ):
+        for i in range(dense_count):
+            dense = dense_vectors[i]
+            sparse = sparse_vectors[i]
+            payload = payloads[i]
             point_id = str(uuid.uuid4())
             named_vectors = {
                 "dense": dense,
@@ -100,7 +115,7 @@ class VectorStoreService:
                     indices=sparse["indices"],
                     values=sparse["values"],
                 )
-            if bm25_vectors is not None and i < len(bm25_vectors):
+            if bm25_vectors is not None:
                 bm25 = bm25_vectors[i]
                 if bm25.get("indices") and bm25.get("values"):
                     named_sparse["bm25"] = models.SparseVector(

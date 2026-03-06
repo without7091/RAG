@@ -1,6 +1,7 @@
 import pytest
 from qdrant_client import AsyncQdrantClient
 
+from app.exceptions import VectorStoreError
 from app.services.vector_store_service import VectorStoreService
 
 
@@ -241,3 +242,33 @@ class TestVectorStoreService:
         doc_texts = [r["payload"]["text"] for r in results if r["payload"].get("doc_id") == "same_doc"]
         assert "version 2" in doc_texts
         assert "version 1" not in doc_texts
+
+    async def test_upsert_raises_on_length_mismatch(self, vs_service):
+        await vs_service.create_collection("mismatch_col")
+        with pytest.raises(VectorStoreError, match="Length mismatch"):
+            await vs_service.upsert_points(
+                "mismatch_col",
+                dense_vectors=[[0.1] * DENSE_DIM, [0.2] * DENSE_DIM],
+                sparse_vectors=[{"indices": [1], "values": [0.1]}],
+                payloads=[
+                    {"text": "a", "doc_id": "doc_a"},
+                    {"text": "b", "doc_id": "doc_b"},
+                ],
+            )
+
+    async def test_upsert_raises_on_bm25_length_mismatch(self, vs_service):
+        await vs_service.create_collection("bm25_mismatch_col")
+        with pytest.raises(VectorStoreError, match="Length mismatch"):
+            await vs_service.upsert_points(
+                "bm25_mismatch_col",
+                dense_vectors=[[0.1] * DENSE_DIM, [0.2] * DENSE_DIM],
+                sparse_vectors=[
+                    {"indices": [1], "values": [0.1]},
+                    {"indices": [2], "values": [0.2]},
+                ],
+                payloads=[
+                    {"text": "a", "doc_id": "doc_a"},
+                    {"text": "b", "doc_id": "doc_b"},
+                ],
+                bm25_vectors=[{"indices": [10], "values": [1.0]}],
+            )

@@ -8,6 +8,7 @@ import json
 import logging
 import time
 
+import aiofiles
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import DocumentStatus
@@ -55,8 +56,8 @@ class PreChunkPipelineService:
                 progress_message="正在读取预切分数据...",
             )
 
-            with open(chunks_json_path, "r", encoding="utf-8") as f:
-                chunks_data = json.load(f)
+            async with aiofiles.open(chunks_json_path, "r", encoding="utf-8") as f:
+                chunks_data = json.loads(await f.read())
 
             if not chunks_data:
                 await self.doc_service.update_status(

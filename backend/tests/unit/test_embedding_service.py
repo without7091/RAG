@@ -2,8 +2,11 @@ import httpx
 import pytest
 import respx
 
+from app.config import get_settings
 from app.exceptions import EmbeddingError
 from app.services.embedding_service import EmbeddingService
+
+EMBEDDING_DIM = get_settings().embedding_dimension
 
 
 @pytest.fixture
@@ -24,8 +27,8 @@ class TestEmbeddingService:
                 200,
                 json={
                     "data": [
-                        {"embedding": [0.1] * 1024, "index": 0},
-                        {"embedding": [0.2] * 1024, "index": 1},
+                        {"embedding": [0.1] * EMBEDDING_DIM, "index": 0},
+                        {"embedding": [0.2] * EMBEDDING_DIM, "index": 1},
                     ]
                 },
             )
@@ -33,19 +36,19 @@ class TestEmbeddingService:
 
         results = await embedding_service.embed_texts(["text1", "text2"])
         assert len(results) == 2
-        assert len(results[0]) == 1024
+        assert len(results[0]) == EMBEDDING_DIM
 
     @respx.mock
     async def test_embed_query_success(self, embedding_service):
         respx.post("https://api.siliconflow.cn/v1/embeddings").mock(
             return_value=httpx.Response(
                 200,
-                json={"data": [{"embedding": [0.5] * 1024, "index": 0}]},
+                json={"data": [{"embedding": [0.5] * EMBEDDING_DIM, "index": 0}]},
             )
         )
 
         result = await embedding_service.embed_query("test query")
-        assert len(result) == 1024
+        assert len(result) == EMBEDDING_DIM
 
     async def test_embed_empty_list(self, embedding_service):
         results = await embedding_service.embed_texts([])
@@ -65,7 +68,7 @@ class TestEmbeddingService:
         route = respx.post("https://api.siliconflow.cn/v1/embeddings").mock(
             return_value=httpx.Response(
                 200,
-                json={"data": [{"embedding": [0.1] * 1024, "index": 0}]},
+                json={"data": [{"embedding": [0.1] * EMBEDDING_DIM, "index": 0}]},
             )
         )
 
@@ -79,7 +82,7 @@ class TestEmbeddingService:
         route = respx.post("https://api.siliconflow.cn/v1/embeddings").mock(
             return_value=httpx.Response(
                 200,
-                json={"data": [{"embedding": [0.1] * 1024, "index": 0}]},
+                json={"data": [{"embedding": [0.1] * EMBEDDING_DIM, "index": 0}]},
             )
         )
 
@@ -88,3 +91,36 @@ class TestEmbeddingService:
 
         body = json.loads(route.calls[0].request.content)
         assert body["model"] == "Qwen/Qwen3-Embedding-4B"
+
+    @respx.mock
+    async def test_embed_raises_on_invalid_response_structure(self, embedding_service):
+        respx.post("https://api.siliconflow.cn/v1/embeddings").mock(
+            return_value=httpx.Response(200, json={"unexpected": []})
+        )
+
+        with pytest.raises(EmbeddingError, match="Invalid embedding response"):
+            await embedding_service.embed_texts(["text"])
+
+    @respx.mock
+    async def test_embed_raises_on_dimension_mismatch(self, embedding_service):
+        respx.post("https://api.siliconflow.cn/v1/embeddings").mock(
+            return_value=httpx.Response(
+                200,
+                json={"data": [{"embedding": [0.1] * (EMBEDDING_DIM - 1), "index": 0}]},
+            )
+        )
+
+        with pytest.raises(EmbeddingError, match="dimension"):
+            await embedding_service.embed_texts(["text"])
+
+    @respx.mock
+    async def test_embed_raises_on_count_mismatch(self, embedding_service):
+        respx.post("https://api.siliconflow.cn/v1/embeddings").mock(
+            return_value=httpx.Response(
+                200,
+                json={"data": [{"embedding": [0.1] * EMBEDDING_DIM, "index": 0}]},
+            )
+        )
+
+        with pytest.raises(EmbeddingError, match="count mismatch"):
+            await embedding_service.embed_texts(["text1", "text2"])

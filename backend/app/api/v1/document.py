@@ -1,4 +1,5 @@
 import json
+from pathlib import PurePosixPath, PureWindowsPath
 
 import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
@@ -36,6 +37,36 @@ from app.utils.id_gen import generate_doc_id
 router = APIRouter(prefix="/document", tags=["Document"])
 
 
+def _validate_safe_filename(filename: str | None) -> str:
+    """Validate user-supplied upload filename to prevent path traversal."""
+    if filename is None:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
+    safe_name = filename.strip()
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
+    posix_path = PurePosixPath(safe_name)
+    win_path = PureWindowsPath(safe_name)
+    path_parts = list(posix_path.parts) + list(win_path.parts)
+
+    is_unsafe_path = (
+        "/" in safe_name
+        or "\\" in safe_name
+        or posix_path.is_absolute()
+        or win_path.is_absolute()
+        or bool(win_path.drive)
+        or any(part in {".", ".."} for part in path_parts)
+        or "\x00" in safe_name
+        or posix_path.name != safe_name
+        or win_path.name != safe_name
+    )
+    if is_unsafe_path:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    return safe_name
+
+
 @router.post("/upload", response_model=DocUploadResponse)
 async def upload_document(
     knowledge_base_id: str,
@@ -52,6 +83,7 @@ async def upload_document(
     await kb_service.get_by_id(knowledge_base_id)
 
     settings = get_settings()
+    safe_file_name = _validate_safe_filename(file.filename)
 
     # Read file content
     content = await file.read()
@@ -62,7 +94,7 @@ async def upload_document(
     # Save file to upload directory
     upload_dir = settings.upload_path / knowledge_base_id
     upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = upload_dir / file.filename
+    file_path = upload_dir / safe_file_name
     async with aiofiles.open(str(file_path), "wb") as f:
         await f.write(content)
 
@@ -72,7 +104,7 @@ async def upload_document(
         doc_service = DocumentService(session)
         await doc_service.create(
             doc_id,
-            file.filename,
+            safe_file_name,
             knowledge_base_id,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
@@ -80,7 +112,7 @@ async def upload_document(
 
     return DocUploadResponse(
         doc_id=doc_id,
-        file_name=file.filename,
+        file_name=safe_file_name,
         knowledge_base_id=knowledge_base_id,
         status=DocumentStatus.UPLOADED,
         chunk_size=chunk_size,
@@ -94,73 +126,61 @@ async def upload_chunks(
     file: UploadFile,
     kb_service: KBService = Depends(get_kb_service_dep),
 ):
-    """Upload a pre-chunked JSON file as a document source.
-
-    The JSON file is validated, saved as the source file (same as normal upload),
-    and the document is marked as is_pre_chunked=True. The pipeline will skip
-    parsing and chunking, going directly to embedding and upsert.
-
-    Use POST /document/vectorize to start the vectorization pipeline.
-    """
-    # Validate KB exists
+    """Upload a pre-chunked JSON file as a document source."""
     await kb_service.get_by_id(knowledge_base_id)
+    safe_file_name = _validate_safe_filename(file.filename)
 
-    # Validate file extension
-    if not file.filename or not file.filename.lower().endswith(".json"):
-        raise HTTPException(status_code=400, detail="仅支持 .json 文件")
+    if not safe_file_name.lower().endswith(".json"):
+        raise HTTPException(status_code=400, detail="Only .json files are supported")
 
-    # Read and validate JSON structure
     content = await file.read()
     try:
         chunks_data = json.loads(content.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise HTTPException(status_code=400, detail=f"JSON 解析失败: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse JSON: {e}")
 
     if not isinstance(chunks_data, list):
-        raise HTTPException(status_code=400, detail="顶层结构必须为数组 []")
-    if len(chunks_data) == 0:
-        raise HTTPException(status_code=400, detail="切片数组不能为空")
+        raise HTTPException(status_code=400, detail="Top-level JSON must be an array")
+    if not chunks_data:
+        raise HTTPException(status_code=400, detail="Chunk array cannot be empty")
 
-    for i, item in enumerate(chunks_data):
+    for i, item in enumerate(chunks_data, start=1):
         if not isinstance(item, dict):
-            raise HTTPException(status_code=400, detail=f"第 {i + 1} 项不是有效对象")
+            raise HTTPException(status_code=400, detail=f"Item {i} is not an object")
         text = item.get("text")
         if not isinstance(text, str) or not text.strip():
-            raise HTTPException(status_code=400, detail=f"第 {i + 1} 项缺少非空 text 字段")
-        hl = item.get("header_level")
-        if hl is not None:
-            if not isinstance(hl, int) or hl < 0 or hl > 6:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"第 {i + 1} 项 header_level 必须为 0-6 整数",
-                )
+            raise HTTPException(status_code=400, detail=f"Item {i} must contain non-empty text")
+        header_level = item.get("header_level")
+        if header_level is not None and (
+            not isinstance(header_level, int) or header_level < 0 or header_level > 6
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Item {i} header_level must be an integer in [0, 6]",
+            )
 
     settings = get_settings()
-
-    # Generate doc_id from file content
     doc_id = generate_doc_id(content)
 
-    # Save JSON file as source (same pattern as normal upload)
     upload_dir = settings.upload_path / knowledge_base_id
     upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = upload_dir / file.filename
+    file_path = upload_dir / safe_file_name
     async with aiofiles.open(str(file_path), "wb") as f:
         await f.write(content)
 
-    # Create document record (status=UPLOADED, is_pre_chunked=True)
     session_factory = get_session_factory()
     async with session_factory() as session:
         doc_service = DocumentService(session)
         await doc_service.create(
             doc_id,
-            file.filename,
+            safe_file_name,
             knowledge_base_id,
             is_pre_chunked=True,
         )
 
     return UploadChunksResponse(
         doc_id=doc_id,
-        file_name=file.filename,
+        file_name=safe_file_name,
         knowledge_base_id=knowledge_base_id,
         status=DocumentStatus.UPLOADED,
         chunk_count=len(chunks_data),
@@ -174,7 +194,7 @@ async def download_chunk_template():
     from pathlib import Path
     template_path = Path(__file__).parents[4] / "docs" / "chunk_template.py"
     if not template_path.exists():
-        raise HTTPException(status_code=404, detail="模板文件不存在")
+        raise HTTPException(status_code=404, detail="Template file not found")
     return FileResponse(
         path=str(template_path),
         filename="chunk_template.py",

@@ -1,4 +1,5 @@
 import io
+import json
 
 
 class TestDocumentAPI:
@@ -32,6 +33,24 @@ class TestDocumentAPI:
             files={"file": ("test.md", io.BytesIO(content), "text/markdown")},
         )
         assert response.status_code == 404
+
+    async def test_upload_rejects_unsafe_filename(self, app_client):
+        kb_id = await self._create_kb(app_client)
+        content = b"# Unsafe"
+        response = await app_client.post(
+            f"/api/v1/document/upload?knowledge_base_id={kb_id}",
+            files={"file": ("../unsafe.md", io.BytesIO(content), "text/markdown")},
+        )
+        assert response.status_code == 400
+
+    async def test_upload_chunks_rejects_unsafe_filename(self, app_client):
+        kb_id = await self._create_kb(app_client)
+        content = json.dumps([{"text": "chunk"}]).encode("utf-8")
+        response = await app_client.post(
+            f"/api/v1/document/upload-chunks?knowledge_base_id={kb_id}",
+            files={"file": ("..\\unsafe.json", io.BytesIO(content), "application/json")},
+        )
+        assert response.status_code == 400
 
     async def test_vectorize_returns_docs(self, app_client):
         """Vectorize should return docs (not tasks) with pending status."""

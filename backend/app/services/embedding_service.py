@@ -33,6 +33,39 @@ class EmbeddingService:
             return self._client
         return await get_httpx_client()
 
+    def _validate_embeddings_response(
+        self,
+        response_data: object,
+        expected_count: int,
+    ) -> list[list[float]]:
+        if not isinstance(response_data, dict):
+            raise EmbeddingError("Invalid embedding response: expected JSON object")
+
+        items = response_data.get("data")
+        if not isinstance(items, list):
+            raise EmbeddingError("Invalid embedding response: missing list field 'data'")
+        if len(items) != expected_count:
+            raise EmbeddingError(
+                "Embedding response count mismatch: "
+                f"expected {expected_count}, got {len(items)}"
+            )
+
+        embeddings: list[list[float]] = []
+        for i, item in enumerate(items):
+            if not isinstance(item, dict) or "embedding" not in item:
+                raise EmbeddingError(f"Invalid embedding response item at index {i}")
+            vector = item["embedding"]
+            if not isinstance(vector, list):
+                raise EmbeddingError(f"Invalid embedding vector type at index {i}")
+            if len(vector) != self.dimension:
+                raise EmbeddingError(
+                    "Embedding vector dimension mismatch at index "
+                    f"{i}: expected {self.dimension}, got {len(vector)}"
+                )
+            embeddings.append(vector)
+
+        return embeddings
+
     @retry_on_api_error(max_attempts=3)
     async def _call_api(self, texts: list[str]) -> list[list[float]]:
         """Call embedding API for a list of texts."""
@@ -54,9 +87,12 @@ class EmbeddingService:
         except httpx.TimeoutException as e:
             raise TimeoutError(f"Embedding API timeout: {e}") from e
 
-        data = response.json()
-        embeddings = [item["embedding"] for item in data["data"]]
-        return embeddings
+        try:
+            data = response.json()
+        except ValueError as e:
+            raise EmbeddingError("Invalid embedding response: non-JSON payload") from e
+
+        return self._validate_embeddings_response(data, expected_count=len(texts))
 
     async def _embed_single(self, text: str) -> list[float]:
         """Embed a single text with concurrency control."""
