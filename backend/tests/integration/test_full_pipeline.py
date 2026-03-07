@@ -22,6 +22,7 @@ import pytest
 from qdrant_client import AsyncQdrantClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.config import get_settings
 from app.models.base import Base
 from app.models.document import DocumentStatus
 from app.schemas.common import TaskStatus
@@ -46,7 +47,7 @@ class FakeEmbeddingService:
     so Chinese tech docs and Chinese finance docs will be distinguishable.
     """
 
-    dimension = 1024
+    dimension = get_settings().embedding_dimension
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         return [self._text_to_vec(t) for t in texts]

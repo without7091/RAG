@@ -21,7 +21,7 @@ Upload → Parse(MarkItDown) → Chunk(树状切分) → Embed(三路) → Upser
                                                   │
                                     ┌─────────────┼─────────────┐
                                     │             │             │
-                              Dense(1024维)  SPLADE(Learned)  BM25(TF)
+                              Dense(2560维)  SPLADE(Learned)  BM25(TF)
                               SiliconFlow API  FastEmbed本地   Jieba+CRC32
 ```
 
@@ -260,7 +260,7 @@ TextNode(
 
 **模型：** Qwen3-Embedding-4B（通过 SiliconFlow API）
 
-**维度：** 1024
+**维度：** 2560
 
 **作用：** 捕捉深层语义相似度，理解同义词、近义表达
 

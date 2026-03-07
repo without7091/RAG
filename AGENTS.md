@@ -22,11 +22,13 @@
 - Python: 4-space indentation, type hints on public interfaces, `snake_case` for modules/functions, `PascalCase` for classes.
 - Python style is enforced with Ruff (`line-length = 100`) and MyPy (Python 3.10 settings in `pyproject.toml`).
 - FastAPI handlers and service flows should remain async (`async`/`await`) to avoid blocking I/O.
+- **File Length Limit**: **Keep individual file lengths manageable (recommended under 200-300 lines) to ensure better readability and efficient AI processing.**
 - TypeScript is strict mode; prefer typed interfaces in `src/lib/api.ts`.
 - Frontend component files use kebab-case (for example, `query-input.tsx`), while exported component names use `PascalCase`.
 
 ## Testing Guidelines
 - Framework: `pytest` + `pytest-asyncio` (configured in `backend/pyproject.toml`).
+- **Development Methodology**: **Follow TDD (Test-Driven Development) practices.**
 - Naming: files `test_*.py`, test functions `test_*`.
 - Put pure logic tests in `backend/tests/unit/`; API and workflow tests in `backend/tests/integration/`.
 - No fixed coverage threshold is enforced; add/adjust tests for every behavior change and verify with `pytest --cov`.

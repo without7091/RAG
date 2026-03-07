@@ -4,8 +4,11 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.document import DocumentStatus
 from app.services.pipeline_service import PipelineService
+
+EMBEDDING_DIM = get_settings().embedding_dimension
 
 
 class FakeNode:
@@ -25,7 +28,7 @@ def mock_services():
     ])
 
     embedding = AsyncMock()
-    embedding.embed_texts = AsyncMock(return_value=[[0.1] * 1024])
+    embedding.embed_texts = AsyncMock(return_value=[[0.1] * EMBEDDING_DIM])
 
     sparse_embedding = AsyncMock()
     sparse_embedding.embed_texts_async = AsyncMock(return_value=[{"indices": [1], "values": [1.0]}])

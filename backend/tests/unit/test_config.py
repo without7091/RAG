@@ -10,7 +10,7 @@ class TestSettings:
         assert s.embedding_model == "Qwen/Qwen3-Embedding-4B"
         assert s.reranker_url == "https://api.siliconflow.cn/v1/rerank"
         assert s.reranker_model == "Qwen/Qwen3-Reranker-4B"
-        assert s.embedding_dimension == 1024
+        assert s.embedding_dimension == 2560
         assert s.sparse_embedding_mode == "local"
         assert s.default_top_k == 20
         assert s.default_top_n == 3

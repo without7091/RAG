@@ -3,13 +3,16 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from app.config import get_settings
 from app.services.retrieval_service import RetrievalService
+
+EMBEDDING_DIM = get_settings().embedding_dimension
 
 
 @pytest.fixture
 def mock_deps():
     embedding = AsyncMock()
-    embedding.embed_query = AsyncMock(return_value=[0.1] * 1024)
+    embedding.embed_query = AsyncMock(return_value=[0.1] * EMBEDDING_DIM)
 
     sparse_embedding = AsyncMock()
     sparse_embedding.embed_query_async = AsyncMock(return_value={"indices": [1], "values": [1.0]})

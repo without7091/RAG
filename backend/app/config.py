@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # Full URL to the embedding endpoint (override for intranet deployment)
     embedding_url: str = "https://api.siliconflow.cn/v1/embeddings"
     embedding_model: str = "Qwen/Qwen3-Embedding-4B"
-    embedding_dimension: int = 1024
+    embedding_dimension: int = 2560
 
     # ── Reranker ──
     reranker_url: str = "https://api.siliconflow.cn/v1/rerank"

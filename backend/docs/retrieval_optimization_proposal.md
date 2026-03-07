@@ -55,7 +55,7 @@ Query ──┬── Dense Embedding (Qwen3-Embedding-4B, SiliconFlow API)  ─
 
 ```
 Collection 向量配置:
-├── "dense"   → VectorParams(size=1024, distance=COSINE)
+├── "dense"   → VectorParams(size=2560, distance=COSINE)
 ├── "sparse"  → SparseVectorParams(modifier=IDF)    # 保留原 BM42（或替换为 miniCOIL）
 └── "bm25"    → SparseVectorParams(modifier=IDF)    # 新增 BM25
 ```
@@ -87,7 +87,7 @@ Query ──┬── Dense Embedding (SiliconFlow API)    ── Prefetch top_k
 await client.create_collection(
     collection_name=kb_id,
     vectors_config={
-        "dense": models.VectorParams(size=1024, distance=models.Distance.COSINE),
+        "dense": models.VectorParams(size=2560, distance=models.Distance.COSINE),
     },
     sparse_vectors_config={
         "sparse": models.SparseVectorParams(modifier=models.Modifier.IDF),  # BM42/miniCOIL
