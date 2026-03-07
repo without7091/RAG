@@ -86,6 +86,8 @@ export interface DocInfo {
   chunk_count: number;
   chunk_size: number | null;
   chunk_overlap: number | null;
+  effective_chunk_size: number;
+  effective_chunk_overlap: number;
   is_pre_chunked: boolean;
   error_message: string | null;
   progress_message: string | null;

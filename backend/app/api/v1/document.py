@@ -67,6 +67,42 @@ def _validate_safe_filename(filename: str | None) -> str:
     return safe_name
 
 
+def _resolve_chunk_settings(
+    request_chunk_size: int | None,
+    request_chunk_overlap: int | None,
+    *,
+    doc_chunk_size: int | None = None,
+    doc_chunk_overlap: int | None = None,
+) -> tuple[int, int]:
+    """Resolve chunk params with precedence: request > doc > global settings."""
+    settings = get_settings()
+    effective_chunk_size = (
+        request_chunk_size
+        if request_chunk_size is not None
+        else doc_chunk_size
+        if doc_chunk_size is not None
+        else settings.chunk_size
+    )
+    effective_chunk_overlap = (
+        request_chunk_overlap
+        if request_chunk_overlap is not None
+        else doc_chunk_overlap
+        if doc_chunk_overlap is not None
+        else settings.chunk_overlap
+    )
+
+    if effective_chunk_overlap >= effective_chunk_size:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"chunk_overlap ({effective_chunk_overlap}) must be less than "
+                f"chunk_size ({effective_chunk_size})"
+            ),
+        )
+
+    return effective_chunk_size, effective_chunk_overlap
+
+
 @router.post("/upload", response_model=DocUploadResponse)
 async def upload_document(
     knowledge_base_id: str,
@@ -84,6 +120,10 @@ async def upload_document(
 
     settings = get_settings()
     safe_file_name = _validate_safe_filename(file.filename)
+    _effective_chunk_size, _effective_chunk_overlap = _resolve_chunk_settings(
+        chunk_size,
+        chunk_overlap,
+    )
 
     # Read file content
     content = await file.read()
@@ -115,8 +155,8 @@ async def upload_document(
         file_name=safe_file_name,
         knowledge_base_id=knowledge_base_id,
         status=DocumentStatus.UPLOADED,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
+        chunk_size=chunk_size if chunk_size is not None else _effective_chunk_size,
+        chunk_overlap=chunk_overlap if chunk_overlap is not None else _effective_chunk_overlap,
     )
 
 
@@ -208,6 +248,7 @@ async def list_documents(
     doc_service: DocumentService = Depends(get_doc_service_dep),
 ):
     """List all documents in a knowledge base."""
+    settings = get_settings()
     docs = await doc_service.list_by_kb(kb_id)
     items = [
         DocInfo(
@@ -218,6 +259,12 @@ async def list_documents(
             chunk_count=d.chunk_count,
             chunk_size=d.chunk_size,
             chunk_overlap=d.chunk_overlap,
+            effective_chunk_size=(
+                d.chunk_size if d.chunk_size is not None else settings.chunk_size
+            ),
+            effective_chunk_overlap=(
+                d.chunk_overlap if d.chunk_overlap is not None else settings.chunk_overlap
+            ),
             is_pre_chunked=d.is_pre_chunked,
             error_message=d.error_message,
             progress_message=d.progress_message,
@@ -302,20 +349,12 @@ async def vectorize_documents(
                     detail=f"Document {doc_id} status is '{doc.status.value}', must be 'uploaded', 'failed', or 'completed'",
                 )
 
-            # Determine chunk params: request override > doc stored > global default
-            effective_chunk_size = request.chunk_size or doc.chunk_size
-            effective_chunk_overlap = request.chunk_overlap or doc.chunk_overlap
-
-            # Cross-field validation
-            if (
-                effective_chunk_size is not None
-                and effective_chunk_overlap is not None
-                and effective_chunk_overlap >= effective_chunk_size
-            ):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"chunk_overlap ({effective_chunk_overlap}) must be less than chunk_size ({effective_chunk_size})",
-                )
+            _resolve_chunk_settings(
+                request.chunk_size,
+                request.chunk_overlap,
+                doc_chunk_size=doc.chunk_size,
+                doc_chunk_overlap=doc.chunk_overlap,
+            )
 
             # Set cleanup flag if re-vectorizing a completed doc
             if doc.status.value == "completed":
@@ -428,15 +467,12 @@ async def update_document_settings(
     if body.chunk_overlap is not None:
         doc.chunk_overlap = body.chunk_overlap
 
-    # Cross-field validation: overlap must be less than size
-    effective_size = doc.chunk_size
-    effective_overlap = doc.chunk_overlap
-    if effective_size is not None and effective_overlap is not None:
-        if effective_overlap >= effective_size:
-            raise HTTPException(
-                status_code=400,
-                detail="chunk_overlap must be less than chunk_size",
-            )
+    _resolve_chunk_settings(
+        body.chunk_size,
+        body.chunk_overlap,
+        doc_chunk_size=doc.chunk_size,
+        doc_chunk_overlap=doc.chunk_overlap,
+    )
     await doc_service.session.commit()
     await doc_service.session.refresh(doc)
 

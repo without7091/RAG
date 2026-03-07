@@ -81,7 +81,7 @@ export function ChunkSettingsDialog({ kbId, doc, open, onOpenChange, onSaved }: 
               type="number"
               min={64}
               max={8192}
-              placeholder="1024"
+              placeholder={String(doc.effective_chunk_size)}
               value={chunkSize}
               onChange={(e) => setChunkSize(e.target.value)}
             />
@@ -95,12 +95,16 @@ export function ChunkSettingsDialog({ kbId, doc, open, onOpenChange, onSaved }: 
               type="number"
               min={0}
               max={4096}
-              placeholder="128"
+              placeholder={String(doc.effective_chunk_overlap)}
               value={chunkOverlap}
               onChange={(e) => setChunkOverlap(e.target.value)}
             />
           </div>
         </div>
+        <p className="text-[11px] text-muted-foreground">
+          当前生效：{doc.effective_chunk_size} / {doc.effective_chunk_overlap}
+          {doc.chunk_size == null && doc.chunk_overlap == null ? "（来自系统默认）" : "（来自文档自定义）"}
+        </p>
         <p className="text-[11px] text-muted-foreground">
           修改参数后，需重新向量化才能生效。已有向量将被清除并重建。
         </p>

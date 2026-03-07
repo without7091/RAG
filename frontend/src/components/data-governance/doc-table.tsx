@@ -226,6 +226,7 @@ export function DocTable({ kbId, docs, loading, onRefresh, onKbRefresh, onDocSta
                   <TableHead>文件名</TableHead>
                   <TableHead>状态</TableHead>
                   <TableHead className="text-right">切片数</TableHead>
+                  <TableHead>切分参数</TableHead>
                   <TableHead>上传时间</TableHead>
                   <TableHead className="w-[150px]">操作</TableHead>
                 </TableRow>
@@ -289,6 +290,20 @@ export function DocTable({ kbId, docs, loading, onRefresh, onKbRefresh, onDocSta
                         </div>
                       </TableCell>
                       <TableCell className="text-right">{doc.chunk_count}</TableCell>
+                      <TableCell className="text-xs">
+                        {doc.is_pre_chunked ? (
+                          <span className="text-muted-foreground">预切片文档</span>
+                        ) : (
+                          <div className="space-y-1">
+                            <div className="font-mono text-[11px]">
+                              {doc.effective_chunk_size} / {doc.effective_chunk_overlap}
+                            </div>
+                            <div className="text-muted-foreground">
+                              {doc.chunk_size == null && doc.chunk_overlap == null ? "默认" : "自定义"}
+                            </div>
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell className="text-muted-foreground text-xs">
                         {new Date(doc.upload_timestamp).toLocaleString("zh-CN")}
                       </TableCell>

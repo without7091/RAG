@@ -1,6 +1,7 @@
 import io
 import json
 
+from app.config import get_settings
 
 class TestDocumentAPI:
     async def _create_kb(self, client) -> str:
@@ -49,6 +50,39 @@ class TestDocumentAPI:
         response = await app_client.post(
             f"/api/v1/document/upload-chunks?knowledge_base_id={kb_id}",
             files={"file": ("..\\unsafe.json", io.BytesIO(content), "application/json")},
+        )
+        assert response.status_code == 400
+
+    async def test_upload_rejects_overlap_not_less_than_effective_size(self, app_client):
+        kb_id = await self._create_kb(app_client)
+        settings = get_settings()
+        content = b"# Test"
+        response = await app_client.post(
+            (
+                f"/api/v1/document/upload?knowledge_base_id={kb_id}"
+                f"&chunk_overlap={settings.chunk_size}"
+            ),
+            files={"file": ("bad_overlap.md", io.BytesIO(content), "text/markdown")},
+        )
+        assert response.status_code == 400
+
+    async def test_vectorize_rejects_overlap_not_less_than_default_chunk_size(self, app_client):
+        kb_id = await self._create_kb(app_client)
+        content = b"# Vectorize overlap\n\ncontent"
+        upload_resp = await app_client.post(
+            f"/api/v1/document/upload?knowledge_base_id={kb_id}",
+            files={"file": ("vec_bad_overlap.md", io.BytesIO(content), "text/markdown")},
+        )
+        doc_id = upload_resp.json()["doc_id"]
+        settings = get_settings()
+
+        response = await app_client.post(
+            "/api/v1/document/vectorize",
+            json={
+                "knowledge_base_id": kb_id,
+                "doc_ids": [doc_id],
+                "chunk_overlap": settings.chunk_size,
+            },
         )
         assert response.status_code == 400
 
@@ -127,6 +161,7 @@ class TestDocumentAPI:
 
     async def test_list_documents(self, app_client):
         kb_id = await self._create_kb(app_client)
+        settings = get_settings()
 
         content = b"# List Test\n\nDoc for listing."
         await app_client.post(
@@ -138,3 +173,32 @@ class TestDocumentAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["total"] >= 1
+        doc = data["documents"][0]
+        assert "effective_chunk_size" in doc
+        assert "effective_chunk_overlap" in doc
+        assert doc["chunk_size"] is None
+        assert doc["chunk_overlap"] is None
+        assert doc["effective_chunk_size"] == settings.chunk_size
+        assert doc["effective_chunk_overlap"] == settings.chunk_overlap
+
+    async def test_list_documents_prefers_doc_level_chunk_params(self, app_client):
+        kb_id = await self._create_kb(app_client)
+
+        content = b"# List Params Test\n\nDoc for listing."
+        await app_client.post(
+            (
+                f"/api/v1/document/upload?knowledge_base_id={kb_id}"
+                "&chunk_size=512&chunk_overlap=64"
+            ),
+            files={"file": ("list_params_test.md", io.BytesIO(content), "text/markdown")},
+        )
+
+        response = await app_client.get(f"/api/v1/document/list/{kb_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] >= 1
+        doc = data["documents"][0]
+        assert doc["chunk_size"] == 512
+        assert doc["chunk_overlap"] == 64
+        assert doc["effective_chunk_size"] == 512
+        assert doc["effective_chunk_overlap"] == 64
