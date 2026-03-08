@@ -123,6 +123,10 @@ async def _stream_retrieval(
             "data": _build_response_model(request, result).model_dump_json(),
         }
     except Exception as exc:
-        retrieve_task.cancel()
         logger.error("Streaming retrieval failed: %s", exc, exc_info=True)
         yield {"event": "error", "data": json.dumps({"error": str(exc)})}
+    finally:
+        # Ensure the background task is cancelled if the generator exits early
+        # (e.g. client disconnect), preventing orphaned retrieval work.
+        if not retrieve_task.done():
+            retrieve_task.cancel()

@@ -74,16 +74,27 @@ async def test_stream_retrieval_emits_embedding_query_step():
         stream=True,
         enable_query_rewrite=False,
     )
+
+    async def mock_retrieve(**kwargs):
+        cb = kwargs.get("status_callback")
+        if cb:
+            await cb("embedding_query")
+            await cb("hybrid_search")
+            await cb("skipping_reranker", candidates=0)
+            await cb("skipping_context_synthesis")
+            await cb("building_response")
+        return {
+            "source_nodes": [],
+            "total_candidates": 0,
+            "top_k_used": 20,
+            "top_n_used": 3,
+            "min_score_used": 0.1,
+            "enable_reranker_used": True,
+            "enable_context_synthesis_used": True,
+        }
+
     retrieval_service = AsyncMock()
-    retrieval_service.retrieve = AsyncMock(return_value={
-        "source_nodes": [],
-        "total_candidates": 0,
-        "top_k_used": 20,
-        "top_n_used": 3,
-        "min_score_used": 0.1,
-        "enable_reranker_used": True,
-        "enable_context_synthesis_used": True,
-    })
+    retrieval_service.retrieve = AsyncMock(side_effect=mock_retrieve)
 
     events = []
     async for item in _stream_retrieval(request, retrieval_service):
