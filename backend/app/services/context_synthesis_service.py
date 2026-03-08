@@ -1,7 +1,10 @@
+import logging
 from collections import defaultdict
 
 from app.config import get_settings
 from app.services.vector_store_service import VectorStoreService
+
+logger = logging.getLogger(__name__)
 
 
 def _merge_overlapping_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -54,6 +57,12 @@ async def synthesize_context(
         try:
             chunks = await vector_store.get_chunks_by_doc_id(knowledge_base_id, doc_id)
         except Exception:
+            logger.warning(
+                "Context synthesis: failed to fetch chunks for doc %s in kb %s, "
+                "falling back to original text",
+                doc_id, knowledge_base_id,
+                exc_info=True,
+            )
             continue
 
         if not chunks:

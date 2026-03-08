@@ -440,15 +440,21 @@ export function retrieveSSE(
           return;
         }
 
-        const json = JSON.parse(line.slice(5).trim());
+        let json: Record<string, unknown>;
+        try {
+          json = JSON.parse(line.slice(5).trim());
+        } catch {
+          console.warn("[SSE] Malformed JSON line, skipping:", line);
+          return;
+        }
         if (currentEvent === "status") {
-          handlers.onStatus?.(json.step, json.candidates);
+          handlers.onStatus?.(json.step as string, json.candidates as number | undefined);
         } else if (currentEvent === "result") {
           receivedTerminalEvent = true;
-          handlers.onResult?.(json);
+          handlers.onResult?.(json as unknown as RetrieveResponse);
         } else if (currentEvent === "error") {
           receivedTerminalEvent = true;
-          handlers.onError?.(json.error);
+          handlers.onError?.(json.error as string);
         }
       };
 

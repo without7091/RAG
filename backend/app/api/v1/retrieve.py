@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -71,16 +72,19 @@ async def _stream_retrieval(
     request: RetrieveRequest,
     retrieval_service: RetrievalService,
 ):
-    """SSE generator for retrieval progress and final result."""
-    rewrite_enabled = request.enable_query_rewrite
+    """SSE generator for retrieval progress and final result.
 
-    try:
-        if rewrite_enabled:
-            yield {"event": "status", "data": json.dumps({"step": "query_rewrite"})}
-        yield {"event": "status", "data": json.dumps({"step": "embedding_query"})}
-        yield {"event": "status", "data": json.dumps({"step": "hybrid_search"})}
+    Uses an asyncio.Queue so that status events from the retrieval service are
+    emitted in real time as each step actually executes, rather than all being
+    sent upfront before any work begins.
+    """
+    status_queue: asyncio.Queue[dict] = asyncio.Queue()
 
-        result = await retrieval_service.retrieve(
+    async def status_callback(step: str, **extra: object) -> None:
+        await status_queue.put({"step": step, **extra})
+
+    retrieve_task: asyncio.Task = asyncio.ensure_future(
+        retrieval_service.retrieve(
             knowledge_base_id=request.knowledge_base_id,
             query=request.query,
             top_k=request.top_k,
@@ -90,27 +94,35 @@ async def _stream_retrieval(
             enable_context_synthesis=request.enable_context_synthesis,
             enable_query_rewrite=request.enable_query_rewrite,
             query_rewrite_debug=request.query_rewrite_debug,
+            status_callback=status_callback,
         )
+    )
 
-        rerank_step = "reranking" if request.enable_reranker else "skipping_reranker"
-        yield {
-            "event": "status",
-            "data": json.dumps({
-                "step": rerank_step,
-                "candidates": result["total_candidates"],
-            }),
-        }
-        context_step = (
-            "context_synthesis"
-            if request.enable_context_synthesis
-            else "skipping_context_synthesis"
-        )
-        yield {"event": "status", "data": json.dumps({"step": context_step})}
-        yield {"event": "status", "data": json.dumps({"step": "building_response"})}
+    try:
+        # Drain status events while the retrieval task is running
+        while not retrieve_task.done():
+            try:
+                data = await asyncio.wait_for(status_queue.get(), timeout=0.05)
+                yield {"event": "status", "data": json.dumps(data)}
+            except asyncio.TimeoutError:
+                pass
+
+        # Drain any status events that were queued after the task finished
+        while not status_queue.empty():
+            data = status_queue.get_nowait()
+            yield {"event": "status", "data": json.dumps(data)}
+
+        # Re-raise if the task failed
+        exc = retrieve_task.exception()
+        if exc is not None:
+            raise exc
+
+        result = retrieve_task.result()
         yield {
             "event": "result",
             "data": _build_response_model(request, result).model_dump_json(),
         }
     except Exception as exc:
+        retrieve_task.cancel()
         logger.error("Streaming retrieval failed: %s", exc, exc_info=True)
         yield {"event": "error", "data": json.dumps({"error": str(exc)})}

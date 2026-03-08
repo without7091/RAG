@@ -152,8 +152,14 @@ class PipelineWorker:
         chunk_overlap: int | None,
         is_pre_chunked: bool = False,
     ) -> None:
-        """Acquire semaphore, run pipeline, release."""
+        """Acquire semaphore, run pipeline, release.
+
+        The retry backoff sleep is intentionally placed AFTER releasing the
+        semaphore so that the slot is available to other pending documents
+        during the wait period.
+        """
         doc_key = (knowledge_base_id, doc_id)
+        needs_backoff = False
         async with self._semaphore:
             async with self._session_factory() as session:
                 # Re-fetch doc to get fresh state
@@ -173,17 +179,22 @@ class PipelineWorker:
                     self._retry_counts.pop(doc_key, None)
                 except Exception as exc:
                     if await self._retry_or_requeue(session, doc, doc_key, exc):
-                        return
-                    self._retry_counts.pop(doc_key, None)
-                    logger.exception("Pipeline wrapper failed for %s/%s", knowledge_base_id, doc_id)
-                    try:
-                        await doc_svc.update_status(
-                            doc_id, knowledge_base_id, DocumentStatus.FAILED,
-                            error_message=str(exc)[:1000],
-                            progress_message=None,
-                        )
-                    except Exception:
-                        pass
+                        needs_backoff = True
+                    else:
+                        self._retry_counts.pop(doc_key, None)
+                        logger.exception("Pipeline wrapper failed for %s/%s", knowledge_base_id, doc_id)
+                        try:
+                            await doc_svc.update_status(
+                                doc_id, knowledge_base_id, DocumentStatus.FAILED,
+                                error_message=str(exc)[:1000],
+                                progress_message=None,
+                            )
+                        except Exception:
+                            pass
+
+        # Sleep AFTER releasing the semaphore so other documents can proceed
+        if needs_backoff and self._retry_backoff_s > 0:
+            await asyncio.sleep(self._retry_backoff_s)
 
     async def _retry_or_requeue(
         self,
@@ -222,8 +233,6 @@ class PipelineWorker:
         await session.commit()
         await session.refresh(doc)
 
-        if self._retry_backoff_s > 0:
-            await asyncio.sleep(self._retry_backoff_s)
         return True
 
     async def _run_single_pipeline(
@@ -260,11 +269,14 @@ class PipelineWorker:
                 vs = await get_vector_store_service()
                 await vs.delete_by_doc_id(doc.knowledge_base_id, doc.doc_id)
                 logger.info("Cleaned up old vectors for %s/%s", doc.knowledge_base_id, doc.doc_id)
+                # Only clear the flag after a confirmed successful delete
+                doc.needs_vector_cleanup = False
+                await session.commit()
             except Exception:
-                logger.warning("Vector cleanup failed for %s/%s, continuing", doc.knowledge_base_id, doc.doc_id)
-            # Clear the cleanup flag
-            doc.needs_vector_cleanup = False
-            await session.commit()
+                logger.warning(
+                    "Vector cleanup failed for %s/%s, will retry on next run",
+                    doc.knowledge_base_id, doc.doc_id,
+                )
 
         # Pre-chunked documents: use PreChunkPipelineService
         if is_pre_chunked:

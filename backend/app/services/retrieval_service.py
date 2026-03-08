@@ -43,17 +43,34 @@ class RetrievalService:
         enable_context_synthesis: bool = True,
         enable_query_rewrite: bool = False,
         query_rewrite_debug: bool = False,
+        status_callback=None,
     ) -> dict:
-        """Execute retrieval pipeline with optional query rewrite fanout."""
+        """Execute retrieval pipeline with optional query rewrite fanout.
+
+        status_callback: optional async callable(step: str, **extra) invoked
+        at the start of each real pipeline step for SSE progress reporting.
+        """
         effective_min_score = self._resolve_min_score(min_score, enable_reranker)
+
+        if status_callback and enable_query_rewrite:
+            await status_callback("query_rewrite")
         query_plan = await self._build_query_plan(query, enable_query_rewrite)
+
         candidates, candidate_stats = await self._collect_candidates(
             knowledge_base_id=knowledge_base_id,
             queries=query_plan.final_queries,
             top_k=top_k,
+            status_callback=status_callback,
         )
 
+        rerank_step = "reranking" if enable_reranker else "skipping_reranker"
+        context_step = "context_synthesis" if enable_context_synthesis else "skipping_context_synthesis"
+
         if not candidates:
+            if status_callback:
+                await status_callback(rerank_step, candidates=0)
+                await status_callback(context_step)
+                await status_callback("building_response")
             return self._build_result(
                 source_nodes=[],
                 total_candidates=0,
@@ -67,6 +84,8 @@ class RetrievalService:
                 candidate_stats=candidate_stats,
             )
 
+        if status_callback:
+            await status_callback(rerank_step, candidates=len(candidates))
         source_nodes = await self._rank_candidates(
             raw_query=query,
             candidates=candidates,
@@ -77,6 +96,8 @@ class RetrievalService:
         if effective_min_score > 0:
             source_nodes = [node for node in source_nodes if node["score"] >= effective_min_score]
 
+        if status_callback:
+            await status_callback(context_step)
         source_nodes = await synthesize_context(
             source_nodes,
             knowledge_base_id,
@@ -84,6 +105,8 @@ class RetrievalService:
             enable_context_synthesis=enable_context_synthesis,
         )
 
+        if status_callback:
+            await status_callback("building_response")
         return self._build_result(
             source_nodes=source_nodes,
             total_candidates=len(candidates),
@@ -137,15 +160,19 @@ class RetrievalService:
         knowledge_base_id: str,
         queries: list[str],
         top_k: int,
+        status_callback=None,
     ) -> tuple[list[dict], dict]:
         merged_candidates: dict[str, dict] = {}
         raw_candidate_count = 0
 
         for current_query in queries:
+            if status_callback:
+                await status_callback("embedding_query")
             query_candidates = await self._search_single_query(
                 knowledge_base_id=knowledge_base_id,
                 query=current_query,
                 top_k=top_k,
+                status_callback=status_callback,
             )
             raw_candidate_count += len(query_candidates)
             self._merge_query_candidates(merged_candidates, current_query, query_candidates)
@@ -170,10 +197,13 @@ class RetrievalService:
         knowledge_base_id: str,
         query: str,
         top_k: int,
+        status_callback=None,
     ) -> list[dict]:
         dense_vector = await self.embedding.embed_query(query)
         sparse_vector = await self.sparse_embedding.embed_query_async(query)
         bm25_vector = self.bm25.text_to_sparse_vector(query) if self.bm25 is not None else None
+        if status_callback:
+            await status_callback("hybrid_search")
         return await self.vector_store.hybrid_search(
             collection_name=knowledge_base_id,
             dense_vector=dense_vector,

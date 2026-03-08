@@ -49,8 +49,18 @@ class SparseEmbeddingService:
     @staticmethod
     def _parse_sparse_results(data: dict) -> list[dict]:
         """Parse API response into list of sparse vectors."""
+        if "data" not in data:
+            raise EmbeddingError(
+                f"Sparse embedding API response missing 'data' field. "
+                f"Response keys: {list(data.keys())}"
+            )
         results = []
-        for item in data["data"]:
+        for i, item in enumerate(data["data"]):
+            if "embedding" not in item:
+                raise EmbeddingError(
+                    f"Sparse embedding API response item[{i}] missing 'embedding' field. "
+                    f"Item keys: {list(item.keys())}"
+                )
             emb = item["embedding"]
             if isinstance(emb, dict):
                 results.append({
@@ -159,12 +169,17 @@ class SparseEmbeddingService:
     # ── Public interface ──
 
     async def embed_texts_async(self, texts: list[str]) -> list[dict]:
-        """Generate sparse vectors (async, for API mode)."""
+        """Generate sparse vectors (async).
+
+        In local mode, FastEmbed inference is CPU-bound; it is offloaded to a
+        thread via run_in_executor so the event loop is not blocked.
+        """
         if not texts:
             return []
         if self.mode == "api":
             return await self._api_embed_texts(texts)
-        return self._local_embed_texts(texts)
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._local_embed_texts, texts)
 
     def embed_texts(self, texts: list[str]) -> list[dict]:
         """Generate sparse vectors (sync, for local mode or when called from sync context).

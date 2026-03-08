@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 
@@ -92,8 +93,11 @@ class PipelineService:
                 progress_message="正在分块...",
             )
             t0 = time.perf_counter()
-            nodes = self.chunking.chunk_markdown(
-                markdown_text, doc_id, file_name, knowledge_base_id
+            loop = asyncio.get_event_loop()
+            nodes = await loop.run_in_executor(
+                None,
+                self.chunking.chunk_markdown,
+                markdown_text, doc_id, file_name, knowledge_base_id,
             )
             logger.info("Pipeline[%s] chunking: %.1fms, %d chunks", doc_id[:12], (time.perf_counter() - t0) * 1000, len(nodes))
 
@@ -141,7 +145,9 @@ class PipelineService:
                     task_id, progress=f"Generating BM25 vectors for {len(nodes)} chunks..."
                 )
                 t0 = time.perf_counter()
-                bm25_vectors = self.bm25.batch_to_sparse_vectors(texts)
+                bm25_vectors = await loop.run_in_executor(
+                    None, self.bm25.batch_to_sparse_vectors, texts
+                )
                 logger.info("Pipeline[%s] BM25 vectors: %.1fms, %d vectors", doc_id[:12], (time.perf_counter() - t0) * 1000, len(bm25_vectors))
 
             # Step 5: Upsert to vector store (delete-before-insert)
