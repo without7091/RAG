@@ -22,18 +22,38 @@ interface Props {
 
 export function DocPreviewSheet({ kbId, docId, open, onOpenChange }: Props) {
   const [data, setData] = useState<DocChunksResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorState, setErrorState] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
+  const currentKey = `${kbId}:${docId}`;
+  const isCurrentData = data?.knowledge_base_id === kbId && data?.doc_id === docId;
+  const error = errorState?.key === currentKey ? errorState.message : null;
+  const loading = open && !isCurrentData && error == null;
 
   useEffect(() => {
     if (!open) return;
-    setLoading(true);
-    setError(null);
+
+    let cancelled = false;
+
     getDocumentChunks(kbId, docId)
-      .then(setData)
-      .catch((err) => setError((err as Error).message))
-      .finally(() => setLoading(false));
-  }, [open, kbId, docId]);
+      .then((res) => {
+        if (cancelled) return;
+        setData(res);
+        setErrorState(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setErrorState({
+          key: currentKey,
+          message: (err as Error).message,
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, kbId, docId, currentKey]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

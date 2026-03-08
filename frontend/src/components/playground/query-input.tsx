@@ -28,6 +28,10 @@ interface Props {
   onTopNChange: (v: number) => void;
   enableReranker: boolean;
   onEnableRerankerChange: (v: boolean) => void;
+  enableContextSynthesis: boolean;
+  onEnableContextSynthesisChange: (v: boolean) => void;
+  enableQueryRewrite: boolean;
+  onEnableQueryRewriteChange: (v: boolean) => void;
   onRetrieve: () => void;
   running: boolean;
 }
@@ -44,6 +48,10 @@ export function QueryInput({
   onTopNChange,
   enableReranker,
   onEnableRerankerChange,
+  enableContextSynthesis,
+  onEnableContextSynthesisChange,
+  enableQueryRewrite,
+  onEnableQueryRewriteChange,
   onRetrieve,
   running,
 }: Props) {
@@ -126,6 +134,26 @@ export function QueryInput({
             />
             <Label htmlFor="reranker-toggle" className="text-xs cursor-pointer">
               Reranker
+            </Label>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 pb-0.5">
+            <Switch
+              id="context-synthesis-toggle"
+              checked={enableContextSynthesis}
+              onCheckedChange={onEnableContextSynthesisChange}
+            />
+            <Label htmlFor="context-synthesis-toggle" className="text-xs cursor-pointer">
+              Context
+            </Label>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 pb-0.5">
+            <Switch
+              id="query-rewrite-toggle"
+              checked={enableQueryRewrite}
+              onCheckedChange={onEnableQueryRewriteChange}
+            />
+            <Label htmlFor="query-rewrite-toggle" className="text-xs cursor-pointer">
+              Rewrite
             </Label>
           </div>
         </div>

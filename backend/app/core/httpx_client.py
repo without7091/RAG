@@ -9,6 +9,7 @@ async def get_httpx_client() -> httpx.AsyncClient:
         _client = httpx.AsyncClient(
             timeout=httpx.Timeout(60.0, connect=10.0),
             proxy=None,  # Bypass system proxy to avoid auth header issues
+            trust_env=False,
         )
     return _client
 

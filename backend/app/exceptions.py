@@ -22,6 +22,37 @@ class KnowledgeBaseAlreadyExistsError(RAGBaseError):
         self.kb_id = kb_id
 
 
+class KBFolderNotFoundError(RAGBaseError):
+    """Raised when a folder is not found."""
+
+    def __init__(self, folder_id: str):
+        super().__init__(f"Knowledge base folder not found: {folder_id}")
+        self.folder_id = folder_id
+
+
+class KBFolderAlreadyExistsError(RAGBaseError):
+    """Raised when creating a folder that already exists under the same parent."""
+
+    def __init__(self, folder_name: str):
+        super().__init__(f"Knowledge base folder already exists: {folder_name}")
+        self.folder_name = folder_name
+
+
+class KBFolderNotEmptyError(RAGBaseError):
+    """Raised when deleting a non-empty folder."""
+
+    def __init__(self, folder_id: str):
+        super().__init__(f"Knowledge base folder is not empty: {folder_id}")
+        self.folder_id = folder_id
+
+
+class KBFolderValidationError(RAGBaseError):
+    """Raised when folder constraints are violated."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+
+
 class DocumentNotFoundError(RAGBaseError):
     """Raised when a document is not found."""
 
@@ -52,6 +83,13 @@ class RerankerError(RAGBaseError):
     """Raised when reranker API call fails."""
 
     def __init__(self, message: str = "Reranker API call failed"):
+        super().__init__(message)
+
+
+class QueryRewriteError(RAGBaseError):
+    """Raised when query rewrite or chat completion fails."""
+
+    def __init__(self, message: str = "Query rewrite failed"):
         super().__init__(message)
 
 

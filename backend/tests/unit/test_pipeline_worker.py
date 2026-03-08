@@ -1,13 +1,13 @@
 """Unit tests for PipelineWorker — DB-backed queue with semaphore-limited concurrency."""
 
 import asyncio
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.base import Base
-from app.models.document import Document, DocumentStatus
+from app.models.document import DocumentStatus
 from app.services.document_service import DocumentService
 from app.services.kb_service import KBService
 from app.services.pipeline_worker import PipelineWorker
@@ -90,7 +90,7 @@ class TestPipelineWorkerPolling:
         pipeline_called = asyncio.Event()
         original_doc_args = {}
 
-        async def mock_run_pipeline(session, doc, services_factory):
+        async def mock_run_pipeline(session, doc, services_factory, is_pre_chunked=False):
             original_doc_args["doc_id"] = doc.doc_id
             # Simulate pipeline completing
             doc_svc = DocumentService(session)
@@ -120,7 +120,7 @@ class TestPipelineWorkerPolling:
 
         call_count = 0
 
-        async def mock_run_pipeline(session, doc, services_factory):
+        async def mock_run_pipeline(session, doc, services_factory, is_pre_chunked=False):
             nonlocal call_count
             call_count += 1
 
@@ -151,7 +151,7 @@ class TestPipelineWorkerConcurrency:
         all_started = asyncio.Event()
         started_count = 0
 
-        async def mock_run_pipeline(session, doc, services_factory):
+        async def mock_run_pipeline(session, doc, services_factory, is_pre_chunked=False):
             nonlocal max_concurrent, current_concurrent, started_count
             async with lock:
                 current_concurrent += 1
@@ -190,7 +190,7 @@ class TestPipelineWorkerConcurrency:
         call_count = 0
         processing = asyncio.Event()
 
-        async def mock_run_pipeline(session, doc, services_factory):
+        async def mock_run_pipeline(session, doc, services_factory, is_pre_chunked=False):
             nonlocal call_count
             call_count += 1
             processing.set()
@@ -229,7 +229,7 @@ class TestPipelineWorkerVectorCleanup:
 
         cleanup_called = asyncio.Event()
 
-        async def mock_run_pipeline(session, doc, services_factory):
+        async def mock_run_pipeline(session, doc, services_factory, is_pre_chunked=False):
             # Check that the flag was set
             if doc.needs_vector_cleanup:
                 cleanup_called.set()
@@ -260,7 +260,7 @@ class TestPipelineWorkerGracefulShutdown:
         pipeline_started = asyncio.Event()
         pipeline_finished = asyncio.Event()
 
-        async def mock_run_pipeline(session, doc, services_factory):
+        async def mock_run_pipeline(session, doc, services_factory, is_pre_chunked=False):
             pipeline_started.set()
             await asyncio.sleep(0.3)
             doc_svc = DocumentService(session)

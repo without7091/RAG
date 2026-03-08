@@ -14,6 +14,11 @@ class TestSettings:
         assert s.sparse_embedding_mode == "local"
         assert s.default_top_k == 20
         assert s.default_top_n == 3
+        assert s.query_rewrite_mode == "dynamic"
+        assert s.query_rewrite_url == "https://api.siliconflow.cn/v1/chat/completions"
+        assert s.query_rewrite_model == "Pro/zai-org/GLM-4.7"
+        assert s.query_rewrite_max_queries == 3
+        assert s.query_rewrite_rerank_pool_size == 40
         assert s.chunk_size == 1024
         assert s.chunk_overlap == 128
         assert s.min_chunk_size == 50

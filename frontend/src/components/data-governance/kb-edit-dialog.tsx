@@ -13,17 +13,32 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { updateKB, type KBInfo } from "@/lib/api";
 import { Loader2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Props {
   kb: KBInfo | null;
+  folderOptions: Array<{ folderId: string; label: string }>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onUpdated: () => void;
 }
 
-export function KBEditDialog({ kb, open, onOpenChange, onUpdated }: Props) {
+export function KBEditDialog({
+  kb,
+  folderOptions,
+  open,
+  onOpenChange,
+  onUpdated,
+}: Props) {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [folderId, setFolderId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -31,18 +46,20 @@ export function KBEditDialog({ kb, open, onOpenChange, onUpdated }: Props) {
     if (kb && open) {
       setName(kb.knowledge_base_name);
       setDesc(kb.description);
+      setFolderId(kb.folder_id ?? folderOptions[0]?.folderId ?? "");
       setError("");
     }
-  }, [kb, open]);
+  }, [folderOptions, kb, open]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!kb || !name.trim()) return;
+    if (!kb || !name.trim() || !folderId) return;
     setLoading(true);
     setError("");
     try {
       await updateKB(kb.knowledge_base_id, {
         knowledge_base_name: name.trim(),
+        folder_id: folderId,
         description: desc.trim(),
       });
       onOpenChange(false);
@@ -73,6 +90,21 @@ export function KBEditDialog({ kb, open, onOpenChange, onUpdated }: Props) {
             />
           </div>
           <div className="space-y-2">
+            <Label>所属二级目录</Label>
+            <Select value={folderId} onValueChange={setFolderId}>
+              <SelectTrigger>
+                <SelectValue placeholder="选择二级目录" />
+              </SelectTrigger>
+              <SelectContent>
+                {folderOptions.map((folder) => (
+                  <SelectItem key={folder.folderId} value={folder.folderId}>
+                    {folder.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
             <Label htmlFor="kb-edit-desc">描述 (可选)</Label>
             <Input
               id="kb-edit-desc"
@@ -87,7 +119,7 @@ export function KBEditDialog({ kb, open, onOpenChange, onUpdated }: Props) {
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               取消
             </Button>
-            <Button type="submit" disabled={loading || !name.trim()}>
+            <Button type="submit" disabled={loading || !name.trim() || !folderId}>
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               保存
             </Button>

@@ -24,6 +24,7 @@ Creates a new knowledge base and initializes its Qdrant collection (dense + spar
 | Field | Type | Required | Constraints | Description |
 |---|---|---|---|---|
 | `knowledge_base_name` | string | Yes | 1-128 chars | Knowledge base display name |
+| `folder_id` | string | No | 1-64 chars | Target level-2 folder ID; omitted values fall back to the default folder |
 | `description` | string | No | max 512 chars | Description (default: `""`) |
 
 **Response** `200`:
@@ -31,6 +32,10 @@ Creates a new knowledge base and initializes its Qdrant collection (dense + spar
 {
   "knowledge_base_id": "kb_xxxxxxxx",
   "knowledge_base_name": "产品文档库",
+  "folder_id": "folder_xxxxxxxx",
+  "folder_name": "子项目A",
+  "parent_folder_id": "folder_root_xxxxxxxx",
+  "parent_folder_name": "项目A",
   "description": "内部产品文档",
   "created_at": "2026-02-27T10:00:00"
 }
@@ -60,6 +65,10 @@ Returns all knowledge bases with their document counts.
     {
       "knowledge_base_id": "kb_xxxxxxxx",
       "knowledge_base_name": "产品文档库",
+      "folder_id": "folder_xxxxxxxx",
+      "folder_name": "子项目A",
+      "parent_folder_id": "folder_root_xxxxxxxx",
+      "parent_folder_name": "项目A",
       "description": "内部产品文档",
       "document_count": 12,
       "created_at": "2026-02-27T10:00:00"
@@ -71,7 +80,80 @@ Returns all knowledge bases with their document counts.
 
 ---
 
-### 1.3 Delete Knowledge Base
+### 1.3 Knowledge Base Tree
+
+```
+GET /api/v1/kb/tree
+```
+
+Returns the fixed two-level folder tree used by the data governance page.
+
+**Response** `200`:
+```json
+{
+  "folders": [
+    {
+      "type": "folder",
+      "folder_id": "folder_root_xxxxxxxx",
+      "folder_name": "项目A",
+      "parent_folder_id": null,
+      "depth": 1,
+      "child_folder_count": 1,
+      "knowledge_base_count": 2,
+      "created_at": "2026-03-08T09:00:00",
+      "children": [
+        {
+          "type": "folder",
+          "folder_id": "folder_xxxxxxxx",
+          "folder_name": "子项目A",
+          "parent_folder_id": "folder_root_xxxxxxxx",
+          "depth": 2,
+          "knowledge_base_count": 2,
+          "created_at": "2026-03-08T09:01:00",
+          "knowledge_bases": []
+        }
+      ]
+    }
+  ],
+  "total_knowledge_bases": 2
+}
+```
+
+---
+
+### 1.4 Knowledge Base Folders
+
+```
+POST /api/v1/kb/folders
+PATCH /api/v1/kb/folders/{folder_id}
+DELETE /api/v1/kb/folders/{folder_id}
+```
+
+- `POST` creates a level-1 folder when `parent_folder_id` is omitted, or a level-2 folder when it points to a level-1 folder.
+- `PATCH` renames a folder.
+- `DELETE` deletes only empty folders; non-empty folders return `409`.
+
+**Create Request Body** (`application/json`):
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `folder_name` | string | Yes | Folder display name |
+| `parent_folder_id` | string | No | Parent level-1 folder ID for creating a level-2 folder |
+
+**Response** `200`:
+```json
+{
+  "folder_id": "folder_xxxxxxxx",
+  "folder_name": "子项目A",
+  "parent_folder_id": "folder_root_xxxxxxxx",
+  "depth": 2,
+  "created_at": "2026-03-08T09:01:00"
+}
+```
+
+---
+
+### 1.5 Delete Knowledge Base
 
 ```
 DELETE /api/v1/kb/{kb_id}

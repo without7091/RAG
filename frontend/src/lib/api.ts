@@ -20,6 +20,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export interface KBInfo {
   knowledge_base_id: string;
   knowledge_base_name: string;
+  folder_id?: string | null;
+  folder_name?: string | null;
+  parent_folder_id?: string | null;
+  parent_folder_name?: string | null;
   description: string;
   document_count: number;
   created_at: string;
@@ -32,6 +36,7 @@ export interface KBListResponse {
 
 export interface KBCreateRequest {
   knowledge_base_name: string;
+  folder_id?: string;
   description?: string;
 }
 
@@ -48,6 +53,7 @@ export function createKB(data: KBCreateRequest) {
 
 export interface KBUpdateRequest {
   knowledge_base_name?: string;
+  folder_id?: string;
   description?: string;
 }
 
@@ -63,6 +69,80 @@ export function deleteKB(kbId: string) {
     `/kb/${kbId}`,
     { method: "DELETE" }
   );
+}
+
+export interface KBFolderInfo {
+  folder_id: string;
+  folder_name: string;
+  parent_folder_id: string | null;
+  depth: 1 | 2;
+  created_at: string;
+}
+
+export interface KBFolderCreateRequest {
+  folder_name: string;
+  parent_folder_id?: string;
+}
+
+export interface KBFolderUpdateRequest {
+  folder_name: string;
+}
+
+export interface KBTreeKnowledgeBaseNode {
+  type: "kb";
+  knowledge_base_id: string;
+  knowledge_base_name: string;
+  description: string;
+  folder_id: string;
+  folder_name: string;
+  parent_folder_id: string | null;
+  parent_folder_name: string | null;
+  document_count: number;
+  created_at: string;
+}
+
+export interface KBTreeLeafFolderNode extends KBFolderInfo {
+  type: "folder";
+  depth: 2;
+  knowledge_base_count: number;
+  knowledge_bases: KBTreeKnowledgeBaseNode[];
+}
+
+export interface KBTreeRootFolderNode extends KBFolderInfo {
+  type: "folder";
+  depth: 1;
+  child_folder_count: number;
+  knowledge_base_count: number;
+  children: KBTreeLeafFolderNode[];
+}
+
+export interface KBTreeResponse {
+  folders: KBTreeRootFolderNode[];
+  total_knowledge_bases: number;
+}
+
+export function listKBTree() {
+  return request<KBTreeResponse>("/kb/tree");
+}
+
+export function createKBFolder(data: KBFolderCreateRequest) {
+  return request<KBFolderInfo>("/kb/folders", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateKBFolder(folderId: string, data: KBFolderUpdateRequest) {
+  return request<KBFolderInfo>(`/kb/folders/${folderId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteKBFolder(folderId: string) {
+  return request<KBFolderInfo>(`/kb/folders/${folderId}`, {
+    method: "DELETE",
+  });
 }
 
 // ─── Document ───
@@ -272,7 +352,33 @@ export interface RetrieveRequest {
   top_k?: number;
   top_n?: number;
   enable_reranker?: boolean;
+  enable_context_synthesis?: boolean;
+  enable_query_rewrite?: boolean;
+  query_rewrite_debug?: boolean;
   stream?: boolean;
+}
+
+export interface QueryPlanDebug {
+  enabled: boolean;
+  strategy: string;
+  canonical_query: string;
+  generated_queries: string[];
+  final_queries: string[];
+  reasons: string[];
+  fallback_used: boolean;
+  model: string | null;
+}
+
+export interface CandidateStatsDebug {
+  query_count: number;
+  raw_candidate_count: number;
+  merged_candidate_count: number;
+  rerank_pool_size: number;
+}
+
+export interface RetrieveDebug {
+  query_plan: QueryPlanDebug | null;
+  candidate_stats: CandidateStatsDebug | null;
 }
 
 export interface RetrieveResponse {
@@ -284,6 +390,8 @@ export interface RetrieveResponse {
   top_n_used: number;
   min_score_used: number | null;
   enable_reranker_used: boolean;
+  enable_context_synthesis_used: boolean;
+  debug?: RetrieveDebug | null;
 }
 
 export function retrieveJSON(data: RetrieveRequest) {
@@ -320,29 +428,50 @@ export function retrieveSSE(
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let currentEvent = "";
+      let receivedTerminalEvent = false;
+
+      const processLine = (line: string) => {
+        if (line.startsWith("event:")) {
+          currentEvent = line.slice(6).trim();
+          return;
+        }
+        if (!line.startsWith("data:")) {
+          return;
+        }
+
+        const json = JSON.parse(line.slice(5).trim());
+        if (currentEvent === "status") {
+          handlers.onStatus?.(json.step, json.candidates);
+        } else if (currentEvent === "result") {
+          receivedTerminalEvent = true;
+          handlers.onResult?.(json);
+        } else if (currentEvent === "error") {
+          receivedTerminalEvent = true;
+          handlers.onError?.(json.error);
+        }
+      };
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          buffer += decoder.decode();
+          const finalLines = buffer.split("\n").filter((line) => line.trim().length > 0);
+          for (const line of finalLines) {
+            processLine(line);
+          }
+          if (!receivedTerminalEvent) {
+            handlers.onError?.("SSE stream closed before final result");
+          }
+          break;
+        }
+
         buffer += decoder.decode(value, { stream: true });
 
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
-
-        let currentEvent = "";
         for (const line of lines) {
-          if (line.startsWith("event:")) {
-            currentEvent = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            const json = JSON.parse(line.slice(5).trim());
-            if (currentEvent === "status") {
-              handlers.onStatus?.(json.step, json.candidates);
-            } else if (currentEvent === "result") {
-              handlers.onResult?.(json);
-            } else if (currentEvent === "error") {
-              handlers.onError?.(json.error);
-            }
-          }
+          processLine(line);
         }
       }
     } catch (err) {

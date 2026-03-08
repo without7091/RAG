@@ -5,11 +5,10 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
-from app.config import get_settings
 from app.dependencies import get_retrieval_service
 from app.exceptions import EmbeddingError, RerankerError, VectorStoreError
-from app.schemas.retrieve import RetrieveRequest, RetrieveResponse, SourceNode
-from app.services.retrieval_service import RetrievalService, synthesize_context
+from app.schemas.retrieve import RetrieveDebug, RetrieveRequest, RetrieveResponse, SourceNode
+from app.services.retrieval_service import RetrievalService
 
 logger = logging.getLogger(__name__)
 
@@ -21,17 +20,13 @@ async def retrieve(
     request: RetrieveRequest,
     retrieval_service: RetrievalService = Depends(get_retrieval_service),
 ):
-    """Execute retrieval pipeline: hybrid search -> rerank -> context synthesis.
-
-    Supports SSE streaming mode (stream=true) and JSON mode (stream=false).
-    """
+    """Execute retrieval pipeline with optional query rewrite fanout."""
     if request.stream:
         return EventSourceResponse(
             _stream_retrieval(request, retrieval_service),
             media_type="text/event-stream",
         )
 
-    # JSON mode
     try:
         result = await retrieval_service.retrieve(
             knowledge_base_id=request.knowledge_base_id,
@@ -40,16 +35,24 @@ async def retrieve(
             top_n=request.top_n,
             min_score=request.min_score,
             enable_reranker=request.enable_reranker,
+            enable_context_synthesis=request.enable_context_synthesis,
+            enable_query_rewrite=request.enable_query_rewrite,
+            query_rewrite_debug=request.query_rewrite_debug,
         )
-    except (EmbeddingError, RerankerError) as e:
-        return JSONResponse(status_code=502, content={"detail": str(e)})
-    except VectorStoreError as e:
-        return JSONResponse(status_code=500, content={"detail": str(e)})
-    except Exception as e:
-        logger.error(f"Retrieval failed: {e}", exc_info=True)
-        return JSONResponse(status_code=500, content={"detail": f"Retrieval failed: {e}"})
+    except (EmbeddingError, RerankerError) as exc:
+        return JSONResponse(status_code=502, content={"detail": str(exc)})
+    except VectorStoreError as exc:
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
+    except Exception as exc:
+        logger.error("Retrieval failed: %s", exc, exc_info=True)
+        return JSONResponse(status_code=500, content={"detail": f"Retrieval failed: {exc}"})
 
+    return _build_response_model(request, result)
+
+
+def _build_response_model(request: RetrieveRequest, result: dict) -> RetrieveResponse:
     source_nodes = [SourceNode(**node) for node in result["source_nodes"]]
+    debug = RetrieveDebug(**result["debug"]) if result.get("debug") else None
     return RetrieveResponse(
         query=request.query,
         knowledge_base_id=request.knowledge_base_id,
@@ -59,6 +62,8 @@ async def retrieve(
         top_n_used=result["top_n_used"],
         min_score_used=result.get("min_score_used"),
         enable_reranker_used=result.get("enable_reranker_used", True),
+        enable_context_synthesis_used=result.get("enable_context_synthesis_used", True),
+        debug=debug,
     )
 
 
@@ -66,142 +71,46 @@ async def _stream_retrieval(
     request: RetrieveRequest,
     retrieval_service: RetrievalService,
 ):
-    """SSE generator for streaming retrieval progress."""
-    enable_reranker = request.enable_reranker
-
-    # min_score logic: adapt based on reranker mode
-    if request.min_score is not None:
-        effective_min_score = request.min_score
-    elif enable_reranker:
-        effective_min_score = get_settings().reranker_min_score
-    else:
-        effective_min_score = 0.0
-
-    yield {"event": "status", "data": json.dumps({"step": "embedding_query"})}
+    """SSE generator for retrieval progress and final result."""
+    rewrite_enabled = request.enable_query_rewrite
 
     try:
-        # Embed query (dense + sparse + BM25)
-        dense_vector = await retrieval_service.embedding.embed_query(request.query)
-        sparse_vector = await retrieval_service.sparse_embedding.embed_query_async(request.query)
-        bm25_vector = None
-        if retrieval_service.bm25 is not None:
-            bm25_vector = retrieval_service.bm25.text_to_sparse_vector(request.query)
-
+        if rewrite_enabled:
+            yield {"event": "status", "data": json.dumps({"step": "query_rewrite"})}
+        yield {"event": "status", "data": json.dumps({"step": "embedding_query"})}
         yield {"event": "status", "data": json.dumps({"step": "hybrid_search"})}
 
-        # Hybrid search
-        candidates = await retrieval_service.vector_store.hybrid_search(
-            collection_name=request.knowledge_base_id,
-            dense_vector=dense_vector,
-            sparse_vector=sparse_vector,
+        result = await retrieval_service.retrieve(
+            knowledge_base_id=request.knowledge_base_id,
+            query=request.query,
             top_k=request.top_k,
-            bm25_vector=bm25_vector,
+            top_n=request.top_n,
+            min_score=request.min_score,
+            enable_reranker=request.enable_reranker,
+            enable_context_synthesis=request.enable_context_synthesis,
+            enable_query_rewrite=request.enable_query_rewrite,
+            query_rewrite_debug=request.query_rewrite_debug,
         )
 
-        if not candidates:
-            yield {
-                "event": "result",
-                "data": json.dumps({
-                    "query": request.query,
-                    "knowledge_base_id": request.knowledge_base_id,
-                    "source_nodes": [],
-                    "total_candidates": 0,
-                    "top_k_used": request.top_k,
-                    "top_n_used": request.top_n,
-                    "min_score_used": effective_min_score,
-                    "enable_reranker_used": enable_reranker,
-                }),
-            }
-            return
-
-        source_nodes = []
-
-        if enable_reranker:
-            yield {
-                "event": "status",
-                "data": json.dumps({
-                    "step": "reranking",
-                    "candidates": len(candidates),
-                }),
-            }
-
-            # Rerank
-            texts = [hit["payload"].get("text", "") for hit in candidates]
-            reranked = await retrieval_service.reranker.rerank(
-                request.query, texts, top_n=request.top_n
-            )
-
-            for item in reranked:
-                idx = item["index"]
-                if idx < len(candidates):
-                    payload = candidates[idx]["payload"]
-                    source_nodes.append({
-                        "text": payload.get("text", ""),
-                        "score": item["score"],
-                        "doc_id": payload.get("doc_id", ""),
-                        "file_name": payload.get("file_name", ""),
-                        "knowledge_base_id": payload.get("knowledge_base_id", ""),
-                        "chunk_index": payload.get("chunk_index"),
-                        "header_path": payload.get("header_path"),
-                        "metadata": {
-                            k: v for k, v in payload.items()
-                            if k not in {"text", "doc_id", "file_name", "knowledge_base_id"}
-                        },
-                    })
-        else:
-            yield {
-                "event": "status",
-                "data": json.dumps({
-                    "step": "skipping_reranker",
-                    "candidates": len(candidates),
-                }),
-            }
-
-            # Skip reranker: use RRF fusion scores, take top_n
-            for candidate in candidates[:request.top_n]:
-                payload = candidate["payload"]
-                source_nodes.append({
-                    "text": payload.get("text", ""),
-                    "score": candidate["score"],
-                    "doc_id": payload.get("doc_id", ""),
-                    "file_name": payload.get("file_name", ""),
-                    "knowledge_base_id": payload.get("knowledge_base_id", ""),
-                    "chunk_index": payload.get("chunk_index"),
-                    "header_path": payload.get("header_path"),
-                    "metadata": {
-                        k: v for k, v in payload.items()
-                        if k not in {"text", "doc_id", "file_name", "knowledge_base_id"}
-                    },
-                })
-
-        yield {"event": "status", "data": json.dumps({"step": "building_response"})}
-
-        # min_score filtering
-        if effective_min_score > 0:
-            source_nodes = [
-                n for n in source_nodes if n["score"] >= effective_min_score
-            ]
-
-        # Context synthesis
-        yield {"event": "status", "data": json.dumps({"step": "context_synthesis"})}
-        source_nodes = await synthesize_context(
-            source_nodes, request.knowledge_base_id, retrieval_service.vector_store
-        )
-
+        rerank_step = "reranking" if request.enable_reranker else "skipping_reranker"
         yield {
-            "event": "result",
+            "event": "status",
             "data": json.dumps({
-                "query": request.query,
-                "knowledge_base_id": request.knowledge_base_id,
-                "source_nodes": source_nodes,
-                "total_candidates": len(candidates),
-                "top_k_used": request.top_k,
-                "top_n_used": request.top_n,
-                "min_score_used": effective_min_score,
-                "enable_reranker_used": enable_reranker,
+                "step": rerank_step,
+                "candidates": result["total_candidates"],
             }),
         }
-
-    except Exception as e:
-        logger.error(f"Streaming retrieval failed: {e}", exc_info=True)
-        yield {"event": "error", "data": json.dumps({"error": str(e)})}
+        context_step = (
+            "context_synthesis"
+            if request.enable_context_synthesis
+            else "skipping_context_synthesis"
+        )
+        yield {"event": "status", "data": json.dumps({"step": context_step})}
+        yield {"event": "status", "data": json.dumps({"step": "building_response"})}
+        yield {
+            "event": "result",
+            "data": _build_response_model(request, result).model_dump_json(),
+        }
+    except Exception as exc:
+        logger.error("Streaming retrieval failed: %s", exc, exc_info=True)
+        yield {"event": "error", "data": json.dumps({"error": str(exc)})}

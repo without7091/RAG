@@ -4,6 +4,10 @@ from fastapi.responses import JSONResponse
 from app.exceptions import (
     DocumentNotFoundError,
     EmbeddingError,
+    KBFolderAlreadyExistsError,
+    KBFolderNotEmptyError,
+    KBFolderNotFoundError,
+    KBFolderValidationError,
     KnowledgeBaseAlreadyExistsError,
     KnowledgeBaseNotFoundError,
     ParsingError,
@@ -25,6 +29,24 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request, exc: KnowledgeBaseAlreadyExistsError
     ):
         return JSONResponse(status_code=409, content={"detail": exc.message})
+
+    @app.exception_handler(KBFolderNotFoundError)
+    async def kb_folder_not_found_handler(request: Request, exc: KBFolderNotFoundError):
+        return JSONResponse(status_code=404, content={"detail": exc.message})
+
+    @app.exception_handler(KBFolderAlreadyExistsError)
+    async def kb_folder_already_exists_handler(
+        request: Request, exc: KBFolderAlreadyExistsError
+    ):
+        return JSONResponse(status_code=409, content={"detail": exc.message})
+
+    @app.exception_handler(KBFolderNotEmptyError)
+    async def kb_folder_not_empty_handler(request: Request, exc: KBFolderNotEmptyError):
+        return JSONResponse(status_code=409, content={"detail": exc.message})
+
+    @app.exception_handler(KBFolderValidationError)
+    async def kb_folder_validation_handler(request: Request, exc: KBFolderValidationError):
+        return JSONResponse(status_code=400, content={"detail": exc.message})
 
     @app.exception_handler(DocumentNotFoundError)
     async def doc_not_found_handler(request: Request, exc: DocumentNotFoundError):

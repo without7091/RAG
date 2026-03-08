@@ -4,15 +4,33 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.common import TaskStatus, TaskStatusResponse
-from app.schemas.document import DocumentStatus, DocUploadResponse, VectorizeDocInfo, VectorizeResponse, DocRetryResponse
+from app.schemas.document import (
+    DocRetryResponse,
+    DocumentStatus,
+    DocUploadResponse,
+    VectorizeDocInfo,
+    VectorizeResponse,
+)
 from app.schemas.kb import KBCreateRequest, KBCreateResponse, KBInfo, KBListResponse
+from app.schemas.kb_folder import (
+    KBFolderCreateRequest,
+    KBTreeKnowledgeBaseNode,
+    KBTreeLeafFolderNode,
+    KBTreeResponse,
+    KBTreeRootFolderNode,
+)
 from app.schemas.retrieve import RetrieveRequest, RetrieveResponse, SourceNode
 
 
 class TestKBSchemas:
     def test_kb_create_request_valid(self):
-        req = KBCreateRequest(knowledge_base_name="test_kb", description="A test KB")
+        req = KBCreateRequest(
+            knowledge_base_name="test_kb",
+            description="A test KB",
+            folder_id="folder_123",
+        )
         assert req.knowledge_base_name == "test_kb"
+        assert req.folder_id == "folder_123"
 
     def test_kb_create_request_empty_name_fails(self):
         with pytest.raises(ValidationError):
@@ -32,6 +50,10 @@ class TestKBSchemas:
             KBInfo(
                 knowledge_base_id="kb_1",
                 knowledge_base_name="name1",
+                folder_id="folder_1",
+                folder_name="子项目A",
+                parent_folder_id="folder_root",
+                parent_folder_name="项目A",
                 description="",
                 document_count=5,
                 created_at=datetime.now(),
@@ -39,6 +61,48 @@ class TestKBSchemas:
         ]
         resp = KBListResponse(knowledge_bases=items, total=1)
         assert resp.total == 1
+
+    def test_kb_folder_create_request_valid(self):
+        req = KBFolderCreateRequest(folder_name="子项目A", parent_folder_id="folder_root")
+        assert req.folder_name == "子项目A"
+
+    def test_kb_tree_response(self):
+        resp = KBTreeResponse(
+            folders=[
+                KBTreeRootFolderNode(
+                    folder_id="folder_root",
+                    folder_name="项目A",
+                    parent_folder_id=None,
+                    created_at=datetime.now(),
+                    child_folder_count=1,
+                    knowledge_base_count=1,
+                    children=[
+                        KBTreeLeafFolderNode(
+                            folder_id="folder_leaf",
+                            folder_name="子项目A",
+                            parent_folder_id="folder_root",
+                            created_at=datetime.now(),
+                            knowledge_base_count=1,
+                            knowledge_bases=[
+                                KBTreeKnowledgeBaseNode(
+                                    knowledge_base_id="kb_1",
+                                    knowledge_base_name="知识库A",
+                                    description="",
+                                    folder_id="folder_leaf",
+                                    folder_name="子项目A",
+                                    parent_folder_id="folder_root",
+                                    parent_folder_name="项目A",
+                                    document_count=2,
+                                    created_at=datetime.now(),
+                                )
+                            ],
+                        )
+                    ],
+                )
+            ],
+            total_knowledge_bases=1,
+        )
+        assert resp.total_knowledge_bases == 1
 
 
 class TestDocumentSchemas:
@@ -87,6 +151,9 @@ class TestRetrieveSchemas:
         )
         assert req.top_k == 20
         assert req.top_n == 3
+        assert req.enable_context_synthesis is True
+        assert req.enable_query_rewrite is False
+        assert req.query_rewrite_debug is False
         assert req.stream is True
 
     def test_retrieve_request_empty_query_fails(self):
@@ -100,10 +167,16 @@ class TestRetrieveSchemas:
             query="q",
             top_k=20,
             top_n=5,
+            enable_context_synthesis=False,
+            enable_query_rewrite=True,
+            query_rewrite_debug=True,
             stream=False,
         )
         assert req.top_k == 20
         assert req.top_n == 5
+        assert req.enable_context_synthesis is False
+        assert req.enable_query_rewrite is True
+        assert req.query_rewrite_debug is True
         assert req.stream is False
 
     def test_source_node(self):
@@ -126,8 +199,29 @@ class TestRetrieveSchemas:
             total_candidates=0,
             top_k_used=10,
             top_n_used=3,
+            enable_context_synthesis_used=False,
+            debug={
+                "query_plan": {
+                    "enabled": True,
+                    "strategy": "expand",
+                    "canonical_query": "test",
+                    "generated_queries": [],
+                    "final_queries": ["test"],
+                    "reasons": [],
+                    "fallback_used": False,
+                    "model": "Qwen/Qwen3.5-4B",
+                },
+                "candidate_stats": {
+                    "query_count": 1,
+                    "raw_candidate_count": 0,
+                    "merged_candidate_count": 0,
+                    "rerank_pool_size": 0,
+                },
+            },
         )
         assert resp.total_candidates == 0
+        assert resp.enable_context_synthesis_used is False
+        assert resp.debug is not None
 
 
 class TestCommonSchemas:

@@ -2,12 +2,15 @@ from collections.abc import AsyncGenerator
 
 from app.db.session import get_session
 from app.services.bm25_service import BM25Service
+from app.services.chat_completion_service import ChatCompletionService
 from app.services.chunking_service import ChunkingService
 from app.services.document_service import DocumentService
 from app.services.embedding_service import EmbeddingService
+from app.services.kb_folder_service import KBFolderService
 from app.services.kb_service import KBService
 from app.services.parsing_service import ParsingService
 from app.services.pipeline_worker import PipelineWorker
+from app.services.query_rewrite_service import QueryRewriteService
 from app.services.reranker_service import RerankerService
 from app.services.retrieval_service import RetrievalService
 from app.services.sparse_embedding_service import SparseEmbeddingService
@@ -19,6 +22,8 @@ _chunking_service: ChunkingService | None = None
 _embedding_service: EmbeddingService | None = None
 _sparse_embedding_service: SparseEmbeddingService | None = None
 _reranker_service: RerankerService | None = None
+_chat_completion_service: ChatCompletionService | None = None
+_query_rewrite_service: QueryRewriteService | None = None
 _vector_store_service: VectorStoreService | None = None
 _bm25_service: BM25Service | None = None
 _pipeline_worker: PipelineWorker | None = None
@@ -71,6 +76,22 @@ def get_reranker_service() -> RerankerService:
     return _reranker_service
 
 
+def get_chat_completion_service() -> ChatCompletionService:
+    global _chat_completion_service
+    if _chat_completion_service is None:
+        _chat_completion_service = ChatCompletionService()
+    return _chat_completion_service
+
+
+def get_query_rewrite_service() -> QueryRewriteService:
+    global _query_rewrite_service
+    if _query_rewrite_service is None:
+        _query_rewrite_service = QueryRewriteService(
+            chat_service=get_chat_completion_service()
+        )
+    return _query_rewrite_service
+
+
 def get_bm25_service() -> BM25Service:
     global _bm25_service
     if _bm25_service is None:
@@ -106,6 +127,11 @@ async def get_kb_service_dep() -> AsyncGenerator[KBService, None]:
         yield KBService(session)
 
 
+async def get_kb_folder_service_dep() -> AsyncGenerator[KBFolderService, None]:
+    async for session in get_session():
+        yield KBFolderService(session)
+
+
 async def get_doc_service_dep() -> AsyncGenerator[DocumentService, None]:
     async for session in get_session():
         yield DocumentService(session)
@@ -119,4 +145,5 @@ async def get_retrieval_service() -> RetrievalService:
         vector_store_service=vs,
         reranker_service=get_reranker_service(),
         bm25_service=get_bm25_service(),
+        query_rewrite_service=get_query_rewrite_service(),
     )

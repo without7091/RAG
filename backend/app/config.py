@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     reranker_model: str = "Qwen/Qwen3-Reranker-4B"
     reranker_min_score: float = 0.1
     default_enable_reranker: bool = True
+    query_rewrite_mode: str = "dynamic"
+    query_rewrite_url: str = "https://api.siliconflow.cn/v1/chat/completions"
+    query_rewrite_model: str = "Pro/zai-org/GLM-4.7"
+    query_rewrite_timeout_ms: int = 15_000
+    query_rewrite_max_queries: int = 3
+    query_rewrite_cache_ttl: int = 300
+    query_rewrite_rerank_pool_size: int = 40
 
     # ── Sparse Embedding (learned) ──
     # "api" = call remote HTTP endpoint; "local" = use local FastEmbed model

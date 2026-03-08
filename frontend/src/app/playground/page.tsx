@@ -19,6 +19,8 @@ export default function PlaygroundPage() {
   const [topK, setTopK] = useState(10);
   const [topN, setTopN] = useState(3);
   const [enableReranker, setEnableReranker] = useState(true);
+  const [enableContextSynthesis, setEnableContextSynthesis] = useState(true);
+  const [enableQueryRewrite, setEnableQueryRewrite] = useState(false);
   const [running, setRunning] = useState(false);
   const [steps, setSteps] = useState<{ step: string; candidates?: number }[]>([]);
   const [result, setResult] = useState<RetrieveResponse | null>(null);
@@ -55,6 +57,8 @@ export default function PlaygroundPage() {
         top_k: topK,
         top_n: topN,
         enable_reranker: enableReranker,
+        enable_context_synthesis: enableContextSynthesis,
+        enable_query_rewrite: enableQueryRewrite,
         stream: true,
       },
       {
@@ -71,7 +75,15 @@ export default function PlaygroundPage() {
         },
       }
     );
-  }, [selectedKb, query, topK, topN, enableReranker]);
+  }, [
+    selectedKb,
+    query,
+    topK,
+    topN,
+    enableReranker,
+    enableContextSynthesis,
+    enableQueryRewrite,
+  ]);
 
   return (
     <div className="space-y-4 h-full flex flex-col">
@@ -89,6 +101,10 @@ export default function PlaygroundPage() {
         onTopNChange={setTopN}
         enableReranker={enableReranker}
         onEnableRerankerChange={setEnableReranker}
+        enableContextSynthesis={enableContextSynthesis}
+        onEnableContextSynthesisChange={setEnableContextSynthesis}
+        enableQueryRewrite={enableQueryRewrite}
+        onEnableQueryRewriteChange={setEnableQueryRewrite}
         onRetrieve={handleRetrieve}
         running={running}
       />
