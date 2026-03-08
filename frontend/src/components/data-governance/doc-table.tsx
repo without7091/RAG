@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Upload, Trash2, Loader2, RefreshCw, Eye, RotateCw, Download, Play, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -84,6 +84,22 @@ export function DocTable({ kbId, docs, loading, onRefresh, onKbRefresh, onDocSta
   );
   const allSelected = selectableDocs.length > 0 && selectableDocs.every((d) => selectedDocs.has(d.doc_id));
   const someSelected = selectedDocs.size > 0 && !allSelected;
+
+  useEffect(() => {
+    setSelectedDocs(new Set());
+  }, [kbId]);
+
+  useEffect(() => {
+    const selectableDocIds = new Set(
+      docs
+        .filter((doc) => doc.status === "uploaded" || doc.status === "failed" || doc.status === "completed")
+        .map((doc) => doc.doc_id)
+    );
+    setSelectedDocs((prev) => {
+      const next = new Set(Array.from(prev).filter((docId) => selectableDocIds.has(docId)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [docs]);
 
   // Three-state select: empty → unvectorized (uploaded+failed) → all selectable → empty
   function toggleSelectAll() {
