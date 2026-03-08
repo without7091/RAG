@@ -1,11 +1,15 @@
 """Unit tests for PipelineService with optional task_manager."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.exceptions import EmbeddingError
 from app.models.document import DocumentStatus
+from app.services.document_service import DocumentService
+from app.services.kb_service import KBService
 from app.services.pipeline_service import PipelineService
 
 EMBEDDING_DIM = get_settings().embedding_dimension
@@ -57,9 +61,6 @@ class TestPipelineServiceWithoutTaskManager:
 
     async def test_run_pipeline_without_task_manager(self, db_session: AsyncSession, mock_services):
         """Pipeline should complete successfully without a task_manager."""
-        from app.services.kb_service import KBService
-        from app.services.document_service import DocumentService
-
         kb_svc = KBService(db_session)
         kb = await kb_svc.create("Pipeline Test KB")
         doc_svc = DocumentService(db_session)
@@ -90,9 +91,6 @@ class TestPipelineServiceWithoutTaskManager:
 
     async def test_run_pipeline_failure_without_task_manager(self, db_session: AsyncSession, mock_services):
         """Pipeline failure should update doc status even without task_manager."""
-        from app.services.kb_service import KBService
-        from app.services.document_service import DocumentService
-
         kb_svc = KBService(db_session)
         kb = await kb_svc.create("Pipeline Fail KB")
         doc_svc = DocumentService(db_session)
@@ -123,15 +121,54 @@ class TestPipelineServiceWithoutTaskManager:
         assert doc.status == DocumentStatus.FAILED
         assert "Parse error" in doc.error_message
 
+    async def test_run_pipeline_reraises_retryable_upstream_error(
+        self,
+        db_session: AsyncSession,
+        mock_services,
+    ):
+        kb_svc = KBService(db_session)
+        kb = await kb_svc.create("Pipeline Retry KB")
+        doc_svc = DocumentService(db_session)
+        await doc_svc.create("doc_retryable", "retryable.md", kb.knowledge_base_id)
+
+        mock_services["embedding"].embed_texts = AsyncMock(
+            side_effect=EmbeddingError(
+                "Embedding API returned 503",
+                status_code=503,
+                retryable=True,
+                upstream="embedding",
+            )
+        )
+
+        pipeline = PipelineService(
+            session=db_session,
+            parsing_service=mock_services["parsing"],
+            chunking_service=mock_services["chunking"],
+            embedding_service=mock_services["embedding"],
+            sparse_embedding_service=mock_services["sparse_embedding"],
+            vector_store_service=mock_services["vector_store"],
+            bm25_service=mock_services["bm25_service"],
+            task_manager=None,
+        )
+
+        with pytest.raises(EmbeddingError):
+            await pipeline.run_pipeline(
+                task_id="unused",
+                file_path="/tmp/retryable.md",
+                doc_id="doc_retryable",
+                file_name="retryable.md",
+                knowledge_base_id=kb.knowledge_base_id,
+            )
+
+        doc = await doc_svc.get_by_doc_id_and_kb("doc_retryable", kb.knowledge_base_id)
+        assert doc.status == DocumentStatus.FAILED
+
 
 class TestPipelineServiceBM25:
     """Tests for BM25 integration in PipelineService."""
 
     async def test_pipeline_calls_bm25_service(self, db_session: AsyncSession, mock_services):
         """Pipeline should call bm25_service.batch_to_sparse_vectors with chunk texts."""
-        from app.services.kb_service import KBService
-        from app.services.document_service import DocumentService
-
         kb_svc = KBService(db_session)
         kb = await kb_svc.create("BM25 Pipeline KB")
         doc_svc = DocumentService(db_session)
@@ -160,9 +197,6 @@ class TestPipelineServiceBM25:
 
     async def test_pipeline_passes_bm25_to_upsert(self, db_session: AsyncSession, mock_services):
         """Pipeline should pass bm25_vectors to upsert_points."""
-        from app.services.kb_service import KBService
-        from app.services.document_service import DocumentService
-
         kb_svc = KBService(db_session)
         kb = await kb_svc.create("BM25 Upsert KB")
         doc_svc = DocumentService(db_session)
@@ -194,9 +228,6 @@ class TestPipelineServiceBM25:
 
     async def test_pipeline_works_without_bm25(self, db_session: AsyncSession, mock_services):
         """Pipeline should work fine when bm25_service is None."""
-        from app.services.kb_service import KBService
-        from app.services.document_service import DocumentService
-
         kb_svc = KBService(db_session)
         kb = await kb_svc.create("No BM25 KB")
         doc_svc = DocumentService(db_session)

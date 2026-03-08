@@ -14,61 +14,71 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # ── API Keys ──
+    # API keys
     siliconflow_api_key: str = "sk-placeholder"
 
-    # ── Dense Embedding ──
-    # Full URL to the embedding endpoint (override for intranet deployment)
+    # Dense embedding
     embedding_url: str = "https://api.siliconflow.cn/v1/embeddings"
     embedding_model: str = "Qwen/Qwen3-Embedding-4B"
     embedding_dimension: int = 2560
 
-    # ── Reranker ──
+    # Reranker and query rewrite
     reranker_url: str = "https://api.siliconflow.cn/v1/rerank"
     reranker_model: str = "Qwen/Qwen3-Reranker-4B"
+    reranker_concurrency: int = 5
     reranker_min_score: float = 0.1
     default_enable_reranker: bool = True
     query_rewrite_mode: str = "dynamic"
     query_rewrite_url: str = "https://api.siliconflow.cn/v1/chat/completions"
     query_rewrite_model: str = "Pro/zai-org/GLM-4.7"
     query_rewrite_timeout_ms: int = 15_000
+    query_rewrite_connect_timeout_s: float = 5.0
+    query_rewrite_read_timeout_s: float | None = None
+    query_rewrite_write_timeout_s: float | None = None
+    query_rewrite_pool_timeout_s: float = 10.0
+    query_rewrite_concurrency: int = 10
     query_rewrite_max_queries: int = 3
     query_rewrite_cache_ttl: int = 300
     query_rewrite_rerank_pool_size: int = 40
 
-    # ── Sparse Embedding (learned) ──
-    # "api" = call remote HTTP endpoint; "local" = use local FastEmbed model
+    # Sparse embedding
     sparse_embedding_mode: str = "local"
-    # API mode settings
     sparse_embedding_url: str = "https://api.siliconflow.cn/v1/embeddings"
     sparse_embedding_model: str = "Qdrant/bm25"
-    # Local mode settings (only used when sparse_embedding_mode=local)
     fastembed_cache_path: str = "./data/fastembed_cache"
     fastembed_model_name: str = "Qdrant/bm25"
 
-    # ── BM25 (traditional keyword sparse) ──
+    # BM25
     bm25_vocab_size: int = 1_048_576
     bm25_stopwords_path: str | None = None
 
-    # ── Qdrant ──
+    # Qdrant
     qdrant_storage_path: str = "./data/qdrant_storage"
 
-    # ── SQLite metadata ──
+    # SQLite metadata
     sqlite_database_url: str = "sqlite+aiosqlite:///./data/metadata.db"
 
-    # ── Upload ──
+    # Uploads
     upload_dir: str = "./data/uploads"
     max_upload_size_mb: int = 100
 
-    # ── Embedding batching ──
-    embedding_batch_size: int = 64      # Max texts per single API call
-    embedding_concurrency: int = 5      # Max concurrent requests when falling back to one-by-one
+    # Shared HTTP client resilience
+    http_connect_timeout_s: float = 10.0
+    http_read_timeout_s: float = 180.0
+    http_write_timeout_s: float = 180.0
+    http_pool_timeout_s: float = 30.0
 
-    # ── Pipeline Worker ──
-    pipeline_max_concurrency: int = 2       # Max documents processed concurrently
-    pipeline_poll_interval: float = 2.0     # Seconds between polling for PENDING docs
+    # Embedding batching
+    embedding_batch_size: int = 64
+    embedding_concurrency: int = 5
 
-    # ── Retrieval defaults ──
+    # Pipeline worker
+    pipeline_max_concurrency: int = 2
+    pipeline_poll_interval: float = 2.0
+    pipeline_retry_attempts: int = 2
+    pipeline_retry_backoff_s: float = 5.0
+
+    # Retrieval defaults
     default_top_k: int = 20
     default_top_n: int = 3
     chunk_size: int = 1024

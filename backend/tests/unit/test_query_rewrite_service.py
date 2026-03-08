@@ -65,3 +65,36 @@ class TestQueryRewriteService:
             "网关连接失败怎么处理",
             "认证异常怎么处理",
         ]
+
+    async def test_build_plan_marks_timeout_fallback_reason(self, rewrite_settings: Settings):
+        chat_service = AsyncMock()
+        chat_service.complete_json = AsyncMock(
+            side_effect=QueryRewriteError(
+                "Query rewrite API timeout",
+                retryable=True,
+                upstream="query_rewrite",
+            )
+        )
+        service = QueryRewriteService(chat_service=chat_service, settings=rewrite_settings)
+
+        plan = await service.build_plan("怎么处理网关连接失败")
+
+        assert plan.fallback_used is True
+        assert "rewrite_timeout" in plan.reasons
+
+    async def test_build_plan_marks_5xx_fallback_reason(self, rewrite_settings: Settings):
+        chat_service = AsyncMock()
+        chat_service.complete_json = AsyncMock(
+            side_effect=QueryRewriteError(
+                "Query rewrite API returned 503",
+                status_code=503,
+                retryable=True,
+                upstream="query_rewrite",
+            )
+        )
+        service = QueryRewriteService(chat_service=chat_service, settings=rewrite_settings)
+
+        plan = await service.build_plan("怎么处理网关连接失败")
+
+        assert plan.fallback_used is True
+        assert "rewrite_5xx" in plan.reasons

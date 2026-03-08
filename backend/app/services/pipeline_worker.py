@@ -11,8 +11,14 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.config import get_settings
 from app.models.document import Document, DocumentStatus
 from app.services.document_service import DocumentService
+from app.utils.retry import (
+    get_api_error_status_code,
+    get_api_error_upstream,
+    is_retryable_api_exception,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +35,25 @@ class PipelineWorker:
         session_factory: async_sessionmaker[AsyncSession],
         max_concurrency: int = 2,
         poll_interval: float = 2.0,
+        retry_attempts: int | None = None,
+        retry_backoff_s: float | None = None,
     ):
+        settings = get_settings()
         self._session_factory = session_factory
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self._poll_interval = poll_interval
         self._max_concurrency = max_concurrency
+        self._retry_attempts = (
+            settings.pipeline_retry_attempts if retry_attempts is None else retry_attempts
+        )
+        self._retry_backoff_s = (
+            settings.pipeline_retry_backoff_s if retry_backoff_s is None else retry_backoff_s
+        )
         self._running = False
         self._poll_task: asyncio.Task | None = None
         self._active_tasks: set[asyncio.Task] = set()
         self._active_doc_keys: set[tuple[str, str]] = set()  # (kb_id, doc_id)
+        self._retry_counts: dict[tuple[str, str], int] = {}
 
     def start(self) -> None:
         """Start the polling loop."""
@@ -75,6 +91,7 @@ class PipelineWorker:
 
         self._active_tasks.clear()
         self._active_doc_keys.clear()
+        self._retry_counts.clear()
         logger.info("PipelineWorker stopped")
 
     async def _poll_loop(self) -> None:
@@ -136,30 +153,78 @@ class PipelineWorker:
         is_pre_chunked: bool = False,
     ) -> None:
         """Acquire semaphore, run pipeline, release."""
+        doc_key = (knowledge_base_id, doc_id)
         async with self._semaphore:
             async with self._session_factory() as session:
                 # Re-fetch doc to get fresh state
                 doc_svc = DocumentService(session)
                 doc = await doc_svc.get_by_doc_id_and_kb(doc_id, knowledge_base_id)
                 if doc is None:
+                    self._retry_counts.pop(doc_key, None)
                     logger.warning("Doc %s/%s disappeared, skipping", knowledge_base_id, doc_id)
                     return
                 if doc.status != DocumentStatus.PENDING:
+                    self._retry_counts.pop(doc_key, None)
                     logger.info("Doc %s/%s no longer PENDING (now %s), skipping", knowledge_base_id, doc_id, doc.status.value)
                     return
 
                 try:
                     await self._run_single_pipeline(session, doc, None, is_pre_chunked)
-                except Exception:
+                    self._retry_counts.pop(doc_key, None)
+                except Exception as exc:
+                    if await self._retry_or_requeue(session, doc, doc_key, exc):
+                        return
+                    self._retry_counts.pop(doc_key, None)
                     logger.exception("Pipeline wrapper failed for %s/%s", knowledge_base_id, doc_id)
                     try:
                         await doc_svc.update_status(
                             doc_id, knowledge_base_id, DocumentStatus.FAILED,
-                            error_message="Pipeline worker internal error",
+                            error_message=str(exc)[:1000],
                             progress_message=None,
                         )
                     except Exception:
                         pass
+
+    async def _retry_or_requeue(
+        self,
+        session: AsyncSession,
+        doc: Document,
+        doc_key: tuple[str, str],
+        exc: Exception,
+    ) -> bool:
+        if not is_retryable_api_exception(exc):
+            return False
+
+        retry_count = self._retry_counts.get(doc_key, 0)
+        if retry_count >= self._retry_attempts:
+            return False
+
+        next_retry = retry_count + 1
+        self._retry_counts[doc_key] = next_retry
+        upstream = get_api_error_upstream(exc)
+        status_code = get_api_error_status_code(exc)
+        logger.warning(
+            "Retrying pipeline for %s/%s after retryable %s failure (attempt=%d/%d, status_code=%s): %s",
+            doc.knowledge_base_id,
+            doc.doc_id,
+            upstream,
+            next_retry,
+            self._retry_attempts,
+            status_code,
+            exc,
+        )
+
+        doc.status = DocumentStatus.PENDING
+        doc.error_message = None
+        doc.progress_message = (
+            f"retrying {upstream} upstream failure ({next_retry}/{self._retry_attempts})"
+        )
+        await session.commit()
+        await session.refresh(doc)
+
+        if self._retry_backoff_s > 0:
+            await asyncio.sleep(self._retry_backoff_s)
+        return True
 
     async def _run_single_pipeline(
         self,

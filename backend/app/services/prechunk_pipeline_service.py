@@ -17,6 +17,7 @@ from app.services.document_service import DocumentService
 from app.services.embedding_service import EmbeddingService
 from app.services.sparse_embedding_service import SparseEmbeddingService
 from app.services.vector_store_service import VectorStoreService
+from app.utils.retry import is_retryable_api_exception
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class PreChunkPipelineService:
                 progress_message="正在读取预切分数据...",
             )
 
-            async with aiofiles.open(chunks_json_path, "r", encoding="utf-8") as f:
+            async with aiofiles.open(chunks_json_path, encoding="utf-8") as f:
                 chunks_data = json.loads(await f.read())
 
             if not chunks_data:
@@ -160,3 +161,5 @@ class PreChunkPipelineService:
                 )
             except Exception:
                 pass
+            if is_retryable_api_exception(e):
+                raise

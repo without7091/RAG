@@ -5,14 +5,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import DocumentStatus
 from app.schemas.common import TaskStatus
+from app.services.bm25_service import BM25Service
 from app.services.chunking_service import ChunkingService
 from app.services.document_service import DocumentService
 from app.services.embedding_service import EmbeddingService
 from app.services.parsing_service import ParsingService
-from app.services.bm25_service import BM25Service
 from app.services.sparse_embedding_service import SparseEmbeddingService
 from app.services.task_manager import TaskManager
 from app.services.vector_store_service import VectorStoreService
+from app.utils.retry import is_retryable_api_exception
 
 logger = logging.getLogger(__name__)
 
@@ -208,3 +209,5 @@ class PipelineService:
                 status=TaskStatus.FAILED,
                 error=str(e),
             )
+            if is_retryable_api_exception(e):
+                raise

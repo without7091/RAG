@@ -1,8 +1,18 @@
 class RAGBaseError(Exception):
     """Base exception for RAG platform."""
 
-    def __init__(self, message: str = "An error occurred"):
+    def __init__(
+        self,
+        message: str = "An error occurred",
+        *,
+        status_code: int | None = None,
+        retryable: bool | None = None,
+        upstream: str | None = None,
+    ):
         self.message = message
+        self.status_code = status_code
+        self.retryable = retryable
+        self.upstream = upstream
         super().__init__(self.message)
 
 
@@ -75,22 +85,58 @@ class ParsingError(RAGBaseError):
 class EmbeddingError(RAGBaseError):
     """Raised when embedding API call fails."""
 
-    def __init__(self, message: str = "Embedding API call failed"):
-        super().__init__(message)
+    def __init__(
+        self,
+        message: str = "Embedding API call failed",
+        *,
+        status_code: int | None = None,
+        retryable: bool | None = None,
+        upstream: str | None = None,
+    ):
+        super().__init__(
+            message,
+            status_code=status_code,
+            retryable=retryable,
+            upstream=upstream,
+        )
 
 
 class RerankerError(RAGBaseError):
     """Raised when reranker API call fails."""
 
-    def __init__(self, message: str = "Reranker API call failed"):
-        super().__init__(message)
+    def __init__(
+        self,
+        message: str = "Reranker API call failed",
+        *,
+        status_code: int | None = None,
+        retryable: bool | None = None,
+        upstream: str | None = None,
+    ):
+        super().__init__(
+            message,
+            status_code=status_code,
+            retryable=retryable,
+            upstream=upstream,
+        )
 
 
 class QueryRewriteError(RAGBaseError):
     """Raised when query rewrite or chat completion fails."""
 
-    def __init__(self, message: str = "Query rewrite failed"):
-        super().__init__(message)
+    def __init__(
+        self,
+        message: str = "Query rewrite failed",
+        *,
+        status_code: int | None = None,
+        retryable: bool | None = None,
+        upstream: str | None = None,
+    ):
+        super().__init__(
+            message,
+            status_code=status_code,
+            retryable=retryable,
+            upstream=upstream,
+        )
 
 
 class VectorStoreError(RAGBaseError):

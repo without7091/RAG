@@ -96,8 +96,8 @@ def _get_content_text(node: SectionNode) -> str:
 def _detect_content_type(text: str) -> str:
     """Detect whether text is primarily code, table, or plain text."""
     lines = text.split("\n")
-    fence_count = sum(1 for l in lines if _FENCE_RE.match(l.strip()))
-    table_count = sum(1 for l in lines if _TABLE_ROW_RE.match(l.strip()))
+    fence_count = sum(1 for line in lines if _FENCE_RE.match(line.strip()))
+    table_count = sum(1 for line in lines if _TABLE_ROW_RE.match(line.strip()))
     total = len(lines)
 
     if fence_count >= 2:

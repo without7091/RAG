@@ -1,9 +1,34 @@
+import asyncio
+
 import httpx
 import pytest
 import respx
 
+from app.config import Settings
 from app.exceptions import RerankerError
 from app.services.reranker_service import RerankerService
+
+
+class TrackingRerankerClient:
+    def __init__(self):
+        self.current_in_flight = 0
+        self.max_in_flight = 0
+
+    async def post(self, url: str, *, json: dict, headers: dict):
+        self.current_in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.current_in_flight)
+        await asyncio.sleep(0.05)
+        self.current_in_flight -= 1
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "results": [
+                    {"index": index, "relevance_score": 1.0 - (index * 0.1)}
+                    for index, _ in enumerate(json["documents"])
+                ]
+            },
+        )
 
 
 @pytest.fixture
@@ -120,3 +145,41 @@ class TestRerankerService:
 
         results = await reranker_service.rerank("q", ["a", "b"], top_n=2)
         assert len(results) == 2
+
+    @respx.mock
+    async def test_rerank_retries_retryable_503(self, mock_client):
+        route = respx.post("https://api.siliconflow.cn/v1/rerank").mock(
+            side_effect=[
+                httpx.Response(
+                    503,
+                    json={"error": "busy"},
+                    request=httpx.Request("POST", "https://api.siliconflow.cn/v1/rerank"),
+                ),
+                httpx.Response(
+                    200,
+                    json={"results": [{"index": 0, "relevance_score": 0.8}]},
+                ),
+            ]
+        )
+        service = RerankerService(client=mock_client)
+
+        results = await service.rerank("q", ["text"], top_n=1)
+
+        assert len(results) == 1
+        assert len(route.calls) == 2
+
+    async def test_rerank_requests_share_concurrency_gate(self):
+        settings = Settings(
+            siliconflow_api_key="test-key",
+            reranker_concurrency=1,
+            _env_file=None,
+        )
+        client = TrackingRerankerClient()
+        service = RerankerService(client=client, settings=settings)
+
+        await asyncio.gather(
+            service.rerank("query-1", ["a", "b"], top_n=1),
+            service.rerank("query-2", ["c", "d"], top_n=1),
+        )
+
+        assert client.max_in_flight == 1

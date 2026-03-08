@@ -1,12 +1,37 @@
+import asyncio
+
 import httpx
 import pytest
 import respx
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.exceptions import EmbeddingError
 from app.services.embedding_service import EmbeddingService
 
 EMBEDDING_DIM = get_settings().embedding_dimension
+
+
+class TrackingEmbeddingClient:
+    def __init__(self, dimension: int):
+        self._dimension = dimension
+        self.current_in_flight = 0
+        self.max_in_flight = 0
+
+    async def post(self, url: str, *, json: dict, headers: dict):
+        self.current_in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.current_in_flight)
+        await asyncio.sleep(0.05)
+        self.current_in_flight -= 1
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={
+                "data": [
+                    {"embedding": [0.1] * self._dimension, "index": index}
+                    for index, _ in enumerate(json["input"])
+                ]
+            },
+        )
 
 
 @pytest.fixture
@@ -124,3 +149,43 @@ class TestEmbeddingService:
 
         with pytest.raises(EmbeddingError, match="count mismatch"):
             await embedding_service.embed_texts(["text1", "text2"])
+
+    @respx.mock
+    async def test_embed_retries_retryable_503(self, mock_client):
+        route = respx.post("https://api.siliconflow.cn/v1/embeddings").mock(
+            side_effect=[
+                httpx.Response(
+                    503,
+                    json={"error": "busy"},
+                    request=httpx.Request("POST", "https://api.siliconflow.cn/v1/embeddings"),
+                ),
+                httpx.Response(
+                    200,
+                    json={"data": [{"embedding": [0.1] * EMBEDDING_DIM, "index": 0}]},
+                ),
+            ]
+        )
+        service = EmbeddingService(client=mock_client)
+
+        result = await service.embed_query("retry me")
+
+        assert len(result) == EMBEDDING_DIM
+        assert len(route.calls) == 2
+
+    async def test_embed_batch_requests_share_concurrency_gate(self):
+        settings = Settings(
+            siliconflow_api_key="test-key",
+            embedding_dimension=2,
+            embedding_batch_size=2,
+            embedding_concurrency=1,
+            _env_file=None,
+        )
+        client = TrackingEmbeddingClient(dimension=2)
+        service = EmbeddingService(client=client, settings=settings)
+
+        await asyncio.gather(
+            service.embed_texts(["text-a", "text-b"]),
+            service.embed_texts(["text-c", "text-d"]),
+        )
+
+        assert client.max_in_flight == 1

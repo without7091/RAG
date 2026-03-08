@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from app.config import Settings, get_settings
 from app.exceptions import QueryRewriteError
 from app.services.chat_completion_service import ChatCompletionService
+from app.utils.retry import get_api_error_status_code, is_timeout_api_exception
 
 QUESTION_SUFFIXES = (
     "怎么处理",
@@ -17,6 +18,7 @@ QUESTION_SUFFIXES = (
     "怎么排查",
     "如何排查",
 )
+COMPOUND_SEPARATORS = ("以及", "并且", "同时", "分别", "和", "，", ",", "、", ";")
 
 
 @dataclass(slots=True)
@@ -113,9 +115,9 @@ class QueryRewriteService:
                 canonical_query,
             )
             reasons.append("llm")
-        except QueryRewriteError:
+        except QueryRewriteError as exc:
             fallback_used = True
-            reasons.append("llm_fallback")
+            reasons.append(self._fallback_reason(exc))
 
         if strategy == "decompose" and not generated_queries:
             generated_queries = self._heuristic_decompose(normalized_query)
@@ -167,17 +169,17 @@ class QueryRewriteService:
     def _looks_like_compound_query(self, query: str) -> bool:
         if not any(suffix in query for suffix in QUESTION_SUFFIXES):
             return False
-        return any(token in query for token in ("以及", "并且", "同时", "分别", "和", "，", ",", "；", ";"))
+        return any(token in query for token in COMPOUND_SEPARATORS)
 
     def _heuristic_decompose(self, query: str) -> list[str]:
         suffix = next((item for item in QUESTION_SUFFIXES if query.endswith(item)), "")
         stem = query[:-len(suffix)] if suffix else query
-        stem = stem.strip("，,；; ")
+        stem = stem.strip("，、 ")
         if not stem:
             return []
 
         parts = [stem]
-        for separator in ("以及", "并且", "同时", "分别", "和", "，", ",", "；", ";"):
+        for separator in COMPOUND_SEPARATORS:
             if separator in stem:
                 parts = [item.strip() for item in stem.split(separator) if item.strip()]
                 if len(parts) > 1:
@@ -230,6 +232,14 @@ class QueryRewriteService:
             "strategy must be one of bypass, expand, decompose. "
             "queries must be short search queries, not answers."
         )
+
+    def _fallback_reason(self, exc: QueryRewriteError) -> str:
+        if is_timeout_api_exception(exc):
+            return "rewrite_timeout"
+        status_code = get_api_error_status_code(exc)
+        if status_code in {502, 503, 504}:
+            return "rewrite_5xx"
+        return "rewrite_error"
 
     def _normalize(self, query: str) -> str:
         return re.sub(r"\s+", " ", query).strip()

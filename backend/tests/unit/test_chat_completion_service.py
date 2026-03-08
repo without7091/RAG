@@ -58,6 +58,57 @@ class TestChatCompletionService:
         assert '"messages"' in request_body
         await client.aclose()
 
+    async def test_complete_json_uses_query_rewrite_timeout_settings(self):
+        settings = Settings(
+            siliconflow_api_key="test-key",
+            query_rewrite_url="https://api.siliconflow.cn/v1/chat/completions",
+            query_rewrite_model="Qwen/Qwen3.5-4B",
+            query_rewrite_connect_timeout_s=4,
+            query_rewrite_read_timeout_s=20,
+            query_rewrite_write_timeout_s=21,
+            query_rewrite_pool_timeout_s=9,
+            _env_file=None,
+        )
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.post.return_value = httpx.Response(
+            200,
+            request=httpx.Request("POST", "https://api.siliconflow.cn/v1/chat/completions"),
+            json={"choices": [{"message": {"content": "{}"}}]},
+        )
+        service = ChatCompletionService(client=client, settings=settings)
+
+        await service.complete_json("Rewrite queries", "retry me")
+
+        timeout = client.post.await_args.kwargs["timeout"]
+        assert timeout.connect == 4
+        assert timeout.read == 20
+        assert timeout.write == 21
+        assert timeout.pool == 9
+
+    @respx.mock
+    async def test_complete_json_retries_retryable_503(self, chat_settings: Settings):
+        client = httpx.AsyncClient()
+        service = ChatCompletionService(client=client, settings=chat_settings)
+        route = respx.post("https://api.siliconflow.cn/v1/chat/completions").mock(
+            side_effect=[
+                httpx.Response(
+                    503,
+                    json={"error": "busy"},
+                    request=httpx.Request("POST", "https://api.siliconflow.cn/v1/chat/completions"),
+                ),
+                httpx.Response(
+                    200,
+                    json={"choices": [{"message": {"content": "{}"}}]},
+                ),
+            ]
+        )
+
+        result = await service.complete_json("Rewrite queries", "retry me")
+
+        assert result == {}
+        assert len(route.calls) == 2
+        await client.aclose()
+
     @respx.mock
     async def test_complete_json_raises_on_invalid_response(self, chat_settings: Settings):
         client = httpx.AsyncClient()

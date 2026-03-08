@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.exceptions import EmbeddingError
 from app.models.base import Base
 from app.models.document import DocumentStatus
 from app.services.document_service import DocumentService
@@ -280,3 +281,126 @@ class TestPipelineWorkerGracefulShutdown:
 
         # Pipeline should have finished before stop returned
         assert pipeline_finished.is_set()
+
+
+class TestPipelineWorkerRetries:
+    async def test_retries_retryable_upstream_error(self, worker_session_factory, kb_id):
+        await _create_doc(worker_session_factory, kb_id, "doc_retry", "retry.md", DocumentStatus.PENDING)
+
+        attempts = 0
+        completed = asyncio.Event()
+
+        async def mock_run_pipeline(session, doc, services_factory, is_pre_chunked=False):
+            nonlocal attempts
+            attempts += 1
+            doc_svc = DocumentService(session)
+            if attempts == 1:
+                await doc_svc.update_status(
+                    doc.doc_id,
+                    doc.knowledge_base_id,
+                    DocumentStatus.FAILED,
+                    error_message="Embedding API returned 503",
+                )
+                raise EmbeddingError(
+                    "Embedding API returned 503",
+                    status_code=503,
+                    retryable=True,
+                    upstream="embedding",
+                )
+
+            await doc_svc.update_status(doc.doc_id, doc.knowledge_base_id, DocumentStatus.COMPLETED)
+            completed.set()
+
+        worker = PipelineWorker(
+            session_factory=worker_session_factory,
+            max_concurrency=2,
+            poll_interval=0.05,
+            retry_attempts=1,
+            retry_backoff_s=0.01,
+        )
+
+        with patch.object(worker, "_run_single_pipeline", side_effect=mock_run_pipeline):
+            worker.start()
+            try:
+                await asyncio.wait_for(completed.wait(), timeout=3)
+            finally:
+                await worker.stop(timeout=2)
+
+        async with worker_session_factory() as session:
+            doc = await DocumentService(session).get_by_doc_id_and_kb("doc_retry", kb_id)
+
+        assert doc is not None
+        assert doc.status == DocumentStatus.COMPLETED
+        assert attempts == 2
+        assert worker._retry_counts == {}
+
+    async def test_does_not_retry_non_retryable_error(self, worker_session_factory, kb_id):
+        await _create_doc(worker_session_factory, kb_id, "doc_no_retry", "no-retry.md", DocumentStatus.PENDING)
+
+        attempts = 0
+
+        async def mock_run_pipeline(session, doc, services_factory, is_pre_chunked=False):
+            nonlocal attempts
+            attempts += 1
+            raise EmbeddingError(
+                "Embedding API returned 400",
+                status_code=400,
+                retryable=False,
+                upstream="embedding",
+            )
+
+        worker = PipelineWorker(
+            session_factory=worker_session_factory,
+            max_concurrency=2,
+            poll_interval=0.05,
+            retry_attempts=2,
+            retry_backoff_s=0.01,
+        )
+
+        with patch.object(worker, "_run_single_pipeline", side_effect=mock_run_pipeline):
+            worker.start()
+            await asyncio.sleep(0.3)
+            await worker.stop(timeout=2)
+
+        async with worker_session_factory() as session:
+            doc = await DocumentService(session).get_by_doc_id_and_kb("doc_no_retry", kb_id)
+
+        assert doc is not None
+        assert doc.status == DocumentStatus.FAILED
+        assert attempts == 1
+
+    async def test_clears_retry_tracking_after_retry_exhausted(self, worker_session_factory, kb_id):
+        await _create_doc(worker_session_factory, kb_id, "doc_retry_exhausted", "exhausted.md", DocumentStatus.PENDING)
+
+        attempts = 0
+
+        async def mock_run_pipeline(session, doc, services_factory, is_pre_chunked=False):
+            nonlocal attempts
+            attempts += 1
+            raise EmbeddingError(
+                "Embedding API returned 503",
+                status_code=503,
+                retryable=True,
+                upstream="embedding",
+            )
+
+        worker = PipelineWorker(
+            session_factory=worker_session_factory,
+            max_concurrency=2,
+            poll_interval=0.05,
+            retry_attempts=1,
+            retry_backoff_s=0.01,
+        )
+
+        with patch.object(worker, "_run_single_pipeline", side_effect=mock_run_pipeline):
+            worker.start()
+            await asyncio.sleep(0.5)
+            await worker.stop(timeout=2)
+
+        async with worker_session_factory() as session:
+            doc = await DocumentService(session).get_by_doc_id_and_kb("doc_retry_exhausted", kb_id)
+
+        assert doc is not None
+        assert doc.status == DocumentStatus.FAILED
+        assert attempts == 2
+        assert worker._retry_counts == {}
