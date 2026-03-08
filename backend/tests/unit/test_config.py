@@ -19,6 +19,7 @@ class TestSettings:
         assert s.query_rewrite_model == "Pro/zai-org/GLM-4.7"
         assert s.query_rewrite_max_queries == 3
         assert s.query_rewrite_rerank_pool_size == 40
+        assert s.context_synthesis_window_size == 1
         assert s.chunk_size == 1024
         assert s.chunk_overlap == 128
         assert s.min_chunk_size == 50

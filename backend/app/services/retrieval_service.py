@@ -3,6 +3,7 @@ import logging
 
 from app.config import get_settings
 from app.services.bm25_service import BM25Service
+from app.services.context_synthesis_service import synthesize_context
 from app.services.embedding_service import EmbeddingService
 from app.services.query_rewrite_service import QueryRewriteService, RewritePlan
 from app.services.reranker_service import RerankerService
@@ -10,47 +11,6 @@ from app.services.sparse_embedding_service import SparseEmbeddingService
 from app.services.vector_store_service import VectorStoreService
 
 logger = logging.getLogger(__name__)
-
-
-async def synthesize_context(
-    source_nodes: list[dict],
-    knowledge_base_id: str,
-    vector_store: VectorStoreService,
-    enable_context_synthesis: bool = True,
-) -> list[dict]:
-    """Enrich source_nodes with adjacent chunk context (context_text)."""
-    if not source_nodes:
-        return source_nodes
-
-    if not enable_context_synthesis:
-        for node in source_nodes:
-            node["context_text"] = node["text"]
-        return source_nodes
-
-    doc_ids = {n["doc_id"] for n in source_nodes if n.get("doc_id")}
-    doc_chunk_map: dict[str, dict[int, str]] = {}
-    for doc_id in doc_ids:
-        try:
-            chunks = await vector_store.get_chunks_by_doc_id(knowledge_base_id, doc_id)
-            doc_chunk_map[doc_id] = {c["chunk_index"]: c["text"] for c in chunks}
-        except Exception:
-            doc_chunk_map[doc_id] = {}
-
-    for node in source_nodes:
-        doc_id = node.get("doc_id", "")
-        chunk_index = node.get("chunk_index")
-        chunk_map = doc_chunk_map.get(doc_id, {})
-        if chunk_index is None or not chunk_map:
-            node["context_text"] = node["text"]
-            continue
-
-        parts = []
-        for candidate_index in (chunk_index - 1, chunk_index, chunk_index + 1):
-            if candidate_index in chunk_map:
-                parts.append(chunk_map[candidate_index])
-        node["context_text"] = "\n\n".join(parts) if parts else node["text"]
-
-    return source_nodes
 
 
 class RetrievalService:

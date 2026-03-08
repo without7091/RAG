@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.config import get_settings
+from app.services.context_synthesis_service import synthesize_context
 from app.services.query_rewrite_service import RewritePlan
 from app.services.retrieval_service import RetrievalService
 
@@ -124,6 +125,137 @@ class TestRetrievalServiceBM25:
         mock_deps["vector_store"].get_chunks_by_doc_id.assert_not_awaited()
         assert result["enable_context_synthesis_used"] is False
         assert result["source_nodes"][0]["context_text"] == result["source_nodes"][0]["text"]
+
+    async def test_merges_overlapping_context_windows_per_document(self, mock_deps):
+        mock_deps["vector_store"].hybrid_search = AsyncMock(return_value=[
+            {
+                "id": "pt4",
+                "score": 0.91,
+                "payload": {
+                    "text": "chunk-4",
+                    "doc_id": "doc1",
+                    "file_name": "test.md",
+                    "knowledge_base_id": "kb1",
+                    "chunk_index": 4,
+                },
+            },
+            {
+                "id": "pt5",
+                "score": 0.9,
+                "payload": {
+                    "text": "chunk-5",
+                    "doc_id": "doc1",
+                    "file_name": "test.md",
+                    "knowledge_base_id": "kb1",
+                    "chunk_index": 5,
+                },
+            },
+            {
+                "id": "pt6",
+                "score": 0.89,
+                "payload": {
+                    "text": "chunk-6",
+                    "doc_id": "doc1",
+                    "file_name": "test.md",
+                    "knowledge_base_id": "kb1",
+                    "chunk_index": 6,
+                },
+            },
+        ])
+        mock_deps["vector_store"].get_chunks_by_doc_id = AsyncMock(return_value=[
+            {"chunk_index": 3, "text": "chunk-3", "header_path": "", "header_level": 0, "content_type": "text"},
+            {"chunk_index": 4, "text": "chunk-4", "header_path": "", "header_level": 0, "content_type": "text"},
+            {"chunk_index": 5, "text": "chunk-5", "header_path": "", "header_level": 0, "content_type": "text"},
+            {"chunk_index": 6, "text": "chunk-6", "header_path": "", "header_level": 0, "content_type": "text"},
+            {"chunk_index": 7, "text": "chunk-7", "header_path": "", "header_level": 0, "content_type": "text"},
+        ])
+        mock_deps["reranker"].rerank = AsyncMock(return_value=[
+            {"index": 0, "score": 0.98, "text": "chunk-4"},
+            {"index": 1, "score": 0.97, "text": "chunk-5"},
+            {"index": 2, "score": 0.96, "text": "chunk-6"},
+        ])
+        svc = RetrievalService(
+            embedding_service=mock_deps["embedding"],
+            sparse_embedding_service=mock_deps["sparse_embedding"],
+            vector_store_service=mock_deps["vector_store"],
+            reranker_service=mock_deps["reranker"],
+            bm25_service=mock_deps["bm25_service"],
+        )
+
+        result = await svc.retrieve("kb1", "test query", top_k=10, top_n=3)
+
+        expected_context = "chunk-3\n\nchunk-4\n\nchunk-5\n\nchunk-6\n\nchunk-7"
+        assert [node["text"] for node in result["source_nodes"]] == ["chunk-4", "chunk-5", "chunk-6"]
+        assert [node["context_text"] for node in result["source_nodes"]] == [
+            expected_context,
+            expected_context,
+            expected_context,
+        ]
+
+    async def test_keeps_disjoint_context_windows_separate(self):
+        vector_store = AsyncMock()
+        vector_store.get_chunks_by_doc_id = AsyncMock(return_value=[
+            {"chunk_index": 3, "text": "chunk-3"},
+            {"chunk_index": 4, "text": "chunk-4"},
+            {"chunk_index": 5, "text": "chunk-5"},
+            {"chunk_index": 7, "text": "chunk-7"},
+            {"chunk_index": 8, "text": "chunk-8"},
+            {"chunk_index": 9, "text": "chunk-9"},
+        ])
+        nodes = [
+            {"text": "chunk-4", "doc_id": "doc1", "chunk_index": 4},
+            {"text": "chunk-8", "doc_id": "doc1", "chunk_index": 8},
+        ]
+
+        result = await synthesize_context(nodes, "kb1", vector_store)
+
+        assert result[0]["context_text"] == "chunk-3\n\nchunk-4\n\nchunk-5"
+        assert result[1]["context_text"] == "chunk-7\n\nchunk-8\n\nchunk-9"
+
+    async def test_does_not_merge_context_across_documents(self):
+        vector_store = AsyncMock()
+        vector_store.get_chunks_by_doc_id = AsyncMock(side_effect=[
+            [
+                {"chunk_index": 3, "text": "doc1-3"},
+                {"chunk_index": 4, "text": "doc1-4"},
+                {"chunk_index": 5, "text": "doc1-5"},
+            ],
+            [
+                {"chunk_index": 3, "text": "doc2-3"},
+                {"chunk_index": 4, "text": "doc2-4"},
+                {"chunk_index": 5, "text": "doc2-5"},
+            ],
+        ])
+        nodes = [
+            {"text": "doc1-4", "doc_id": "doc1", "chunk_index": 4},
+            {"text": "doc2-4", "doc_id": "doc2", "chunk_index": 4},
+        ]
+
+        result = await synthesize_context(nodes, "kb1", vector_store)
+
+        assert result[0]["context_text"] == "doc1-3\n\ndoc1-4\n\ndoc1-5"
+        assert result[1]["context_text"] == "doc2-3\n\ndoc2-4\n\ndoc2-5"
+
+    async def test_falls_back_to_text_when_chunk_lookup_fails(self):
+        vector_store = AsyncMock()
+        vector_store.get_chunks_by_doc_id = AsyncMock(side_effect=RuntimeError("boom"))
+        nodes = [{"text": "chunk-4", "doc_id": "doc1", "chunk_index": 4}]
+
+        result = await synthesize_context(nodes, "kb1", vector_store)
+
+        assert result[0]["context_text"] == "chunk-4"
+
+    async def test_clamps_context_to_available_edge_chunks(self):
+        vector_store = AsyncMock()
+        vector_store.get_chunks_by_doc_id = AsyncMock(return_value=[
+            {"chunk_index": 0, "text": "chunk-0"},
+            {"chunk_index": 1, "text": "chunk-1"},
+        ])
+        nodes = [{"text": "chunk-0", "doc_id": "doc1", "chunk_index": 0}]
+
+        result = await synthesize_context(nodes, "kb1", vector_store)
+
+        assert result[0]["context_text"] == "chunk-0\n\nchunk-1"
 
     async def test_reranker_uses_raw_query_after_query_rewrite(self, mock_deps):
         query_rewriter = AsyncMock()

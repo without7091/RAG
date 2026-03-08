@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     # Retrieval defaults
     default_top_k: int = 20
     default_top_n: int = 3
+    context_synthesis_window_size: int = 1
     chunk_size: int = 1024
     chunk_overlap: int = 128
     min_chunk_size: int = 50
