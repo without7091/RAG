@@ -11,11 +11,12 @@ Production-grade multi-tenant RAG (Retrieval-Augmented Generation) knowledge man
 
 ## Current State
 
-v2.0.0 — Feature-complete platform with advanced retrieval controls and custom chunking.
+v3.0.0 — MCP (Model Context Protocol) integration for AI Agent interoperability.
 
-- **Backend**: Fully functional FastAPI service with hybrid search (dense + BM42 sparse), reranker (with dynamic toggle), document upload pipeline, pre-chunked JSON upload, knowledge base CRUD
-- **Frontend**: Next.js admin dashboard with knowledge base management, document management, retrieval playground (with Reranker on/off switch)
-- **Docs**: V1 docs archived in `docs/v1_archive/`, V2 architecture design, RAG evolution research report
+- **Backend**: FastAPI service with hybrid search, reranker, document pipeline, **MCP Server** (4 Tools, 3 Resources, 2 Prompts) mounted at `/mcp`
+- **Frontend**: Next.js admin dashboard with knowledge base management, document management, retrieval playground
+- **MCP**: Streamable HTTP transport at `/mcp`, stdio adapter for local development
+- **Docs**: V1 docs in `docs/v1_archive/`, V2 docs in `docs/v2/`
 
 ## Git & Version Control
 
@@ -42,6 +43,7 @@ v2.0.0 — Feature-complete platform with advanced retrieval controls and custom
 - **Reranker**: Qwen3-Reranker-4B via SiliconFlow API (`https://api.siliconflow.cn/v1/rerank`)
 - **Sparse Vectors**: FastEmbed (local model, requires HuggingFace download into `FASTEMBED_CACHE_PATH`)
 - **Document Parsing**: MarkItDown or Docling for lossless Markdown conversion
+- **MCP**: FastMCP (mcp>=1.9.0) for Model Context Protocol server, mounted at `/mcp` as ASGI sub-app
 
 ### Frontend
 - **Framework**: Next.js 14+ (App Router), TypeScript
@@ -66,6 +68,36 @@ Each knowledge base (`knowledge_base_id`) maps to an independent Qdrant Collecti
 - `POST /api/v1/document/upload` — Upload documents (async parse → chunk → embed → upsert pipeline)
 - `POST /api/v1/document/upload-chunks` — Upload pre-chunked documents as JSON (skip parse+chunk)
 - `POST /api/v1/retrieve` — Core retrieval: hybrid search → rerank (optional) → context synthesis
+- `POST /mcp` — MCP Streamable HTTP endpoint (Agent interoperability)
+
+### MCP Server (`/mcp`)
+MCP Server is mounted as an ASGI sub-application, sharing the same process and service layer with REST API.
+
+**Tools** (4):
+- `list_knowledge_bases` — List all KBs (entry point for Agent discovery)
+- `search_knowledge_base` — Hybrid retrieval + rerank in a specified KB
+- `get_knowledge_base_detail` — KB info with document list
+- `get_platform_stats` — Platform-wide statistics
+
+**Resources** (3):
+- `rag://knowledge-bases` — All KBs list (for context injection)
+- `rag://knowledge-bases/{kb_id}/info` — Single KB detail
+- `rag://stats` — Platform statistics
+
+**Prompts** (2):
+- `search_and_answer` — Search + answer workflow
+- `cross_kb_search` — Cross-KB search workflow
+
+**Client Configuration** (Claude Desktop / Claude Code / Cursor):
+```json
+{
+  "mcpServers": {
+    "rag-knowledge-base": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
 
 ### Data Integrity Pattern
 Upsert uses delete-before-insert keyed on `doc_id` (content-based hash) to prevent duplicate/stale data.

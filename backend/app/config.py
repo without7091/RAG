@@ -88,6 +88,13 @@ class Settings(BaseSettings):
     header_prefix_template: str = "[{path}]\n\n"
     header_separator: str = " > "
 
+    # MCP Server
+    mcp_enabled: bool = True
+    mcp_server_name: str = "rag-knowledge-base"
+    mcp_default_top_n: int = 5
+    mcp_default_enable_reranker: bool = True
+    mcp_stateless: bool = True
+
     @property
     def upload_path(self) -> Path:
         return Path(self.upload_dir)

@@ -110,6 +110,15 @@ def create_app() -> FastAPI:
     # Routes
     app.include_router(api_router)
 
+    # MCP Server (mounted as ASGI sub-application at /mcp)
+    settings = get_settings()
+    if settings.mcp_enabled:
+        from app.mcp import create_mcp_server
+
+        mcp_server = create_mcp_server()
+        app.mount("/mcp", mcp_server.streamable_http_app())
+        logger.info("MCP server mounted at /mcp")
+
     return app
 
 
