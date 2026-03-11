@@ -71,6 +71,22 @@ function toKbInfo(kb: KBTreeKnowledgeBaseNode): KBInfo {
   };
 }
 
+function sortedTree(tree: KBTreeRootFolderNode[]): KBTreeRootFolderNode[] {
+  return [...tree]
+    .sort((a, b) => a.folder_name.localeCompare(b.folder_name, "zh"))
+    .map((root) => ({
+      ...root,
+      children: [...root.children]
+        .sort((a, b) => a.folder_name.localeCompare(b.folder_name, "zh"))
+        .map((child) => ({
+          ...child,
+          knowledge_bases: [...child.knowledge_bases].sort((a, b) =>
+            a.knowledge_base_name.localeCompare(b.knowledge_base_name, "zh")
+          ),
+        })),
+    }));
+}
+
 export function KBTree({
   tree,
   selectedKb,
@@ -90,9 +106,11 @@ export function KBTree({
   onDeleteKb,
   onCopyKbId,
 }: KBTreeProps) {
+  const sorted = sortedTree(tree);
+
   return (
     <div className="space-y-1">
-      {tree.map((root) => {
+      {sorted.map((root) => {
         const rootExpanded = expandedFolderIds.has(root.folder_id);
         const rootSelected = selectedFolderId === root.folder_id;
 
@@ -196,7 +214,7 @@ export function KBTree({
                                       <div className="truncate font-medium">
                                         {kb.knowledge_base_name}
                                       </div>
-                                      <div className="flex items-center gap-1">
+                                      <div className="items-center gap-1 hidden group-hover:flex">
                                         <span
                                           className={cn(
                                             "truncate text-xs font-mono",
@@ -230,7 +248,7 @@ export function KBTree({
                                       </div>
                                       <div
                                         className={cn(
-                                          "text-xs",
+                                          "text-xs hidden group-hover:block",
                                           isSelected
                                             ? "text-primary-foreground/70"
                                             : "text-muted-foreground"
@@ -308,7 +326,7 @@ function FolderRow({
           <div className="truncate font-medium">{title}</div>
           <div
             className={cn(
-              "text-xs",
+              "text-xs hidden group-hover:block",
               selected ? "text-accent-foreground/70" : "text-muted-foreground"
             )}
           >
@@ -355,7 +373,7 @@ function ActionButton({
     <Button
       variant="ghost"
       size="sm"
-      className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100"
+      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
       disabled={disabled}
       onClick={(event) => {
         event.stopPropagation();

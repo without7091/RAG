@@ -55,6 +55,7 @@ export default function DataGovernancePage() {
   const selectedFolderIdRef = useRef<string | null>(null);
 
   const handleSelectKb = useCallback((kbId: string | null) => {
+    if (kbId !== null && kbId === selectedKbRef.current) return;
     selectedKbRef.current = kbId;
     selectedFolderIdRef.current = null;
     setSelectedKb(kbId);

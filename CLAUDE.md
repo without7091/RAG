@@ -93,3 +93,4 @@ Upsert uses delete-before-insert keyed on `doc_id` (content-based hash) to preve
 - Markdown-First strategy: all documents convert to `.md` preserving heading hierarchy and table semantics before chunking
 - Frontend is a data governance tool for admins, not an end-user chat interface
 - Retrieval Playground uses SSE for real-time progress streaming
+- **Development Methodology**: **Follow TDD (Test-Driven Development) practices.**
