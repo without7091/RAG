@@ -83,6 +83,30 @@ class TestMCPEndpointExists:
             # (it only accepts POST), but not 404
             assert response.status_code != 404
 
+    async def test_mcp_mount_does_not_duplicate_subpath(self, mcp_app):
+        """The mounted sub-app should expose MCP at /mcp, not /mcp/mcp."""
+        app, _ = mcp_app
+
+        mcp_mount = next(route for route in app.routes if getattr(route, "path", None) == "/mcp")
+        child_paths = {getattr(route, "path", None) for route in mcp_mount.app.routes}
+
+        assert "/mcp" not in child_paths
+
+    def test_mcp_http_requests_do_not_fail_with_uninitialized_task_group(self):
+        """A malformed MCP request should return protocol/user error, not framework startup failure."""
+        from starlette.testclient import TestClient
+
+        from app.mcp.server import create_mcp_server
+
+        mcp_server = create_mcp_server()
+        mcp_asgi = mcp_server.streamable_http_app()
+
+        with TestClient(mcp_asgi, raise_server_exceptions=False) as client:
+            response = client.get("/")
+
+        assert response.status_code != 500
+        assert "Task group is not initialized" not in response.text
+
 
 class TestMCPServerRegistration:
     """Test that the MCP server has the expected tools, resources, and prompts registered."""
@@ -138,6 +162,37 @@ class TestMCPServerRegistration:
 
         # search_knowledge_base should reference list_knowledge_bases
         assert "list_knowledge_bases" in tools_by_name["search_knowledge_base"].description
+
+    async def test_search_tool_schema_validates_query_and_top_n(self):
+        """The MCP tool schema should expose the same basic constraints as the REST API."""
+        from app.mcp.server import create_mcp_server
+
+        mcp = create_mcp_server()
+        tools_by_name = {t.name: t for t in mcp._tool_manager.list_tools()}
+        schema = tools_by_name["search_knowledge_base"].parameters
+        properties = schema["properties"]
+
+        assert properties["query"].get("minLength") == 1
+        assert properties["top_n"].get("minimum") == 1
+
+    async def test_search_tool_schema_defaults_follow_settings(self, monkeypatch):
+        """The advertised MCP defaults should follow runtime configuration."""
+        from app.config import reload_settings
+        from app.mcp.server import create_mcp_server
+
+        with monkeypatch.context() as m:
+            m.setenv("MCP_DEFAULT_TOP_N", "9")
+            m.setenv("MCP_DEFAULT_ENABLE_RERANKER", "false")
+            reload_settings()
+            mcp = create_mcp_server()
+
+        reload_settings()
+
+        tools_by_name = {t.name: t for t in mcp._tool_manager.list_tools()}
+        properties = tools_by_name["search_knowledge_base"].parameters["properties"]
+
+        assert properties["top_n"]["default"] == 9
+        assert properties["enable_reranker"]["default"] is False
 
 
 class TestMCPToolExecution:

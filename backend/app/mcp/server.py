@@ -1,8 +1,10 @@
 """FastMCP server — registers Tools, Resources, and Prompts."""
 
 import logging
+from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from app.config import get_settings
 from app.db.session import get_session_factory
@@ -21,6 +23,7 @@ def create_mcp_server() -> FastMCP:
     mcp = FastMCP(
         name=settings.mcp_server_name,
         stateless_http=settings.mcp_stateless,
+        streamable_http_path="/",
     )
 
     _register_tools(mcp)
@@ -43,6 +46,8 @@ def _get_session():
 
 
 def _register_tools(mcp: FastMCP) -> None:
+    settings = get_settings()
+
     @mcp.tool(
         name="list_knowledge_bases",
         description=(
@@ -65,10 +70,10 @@ def _register_tools(mcp: FastMCP) -> None:
         ),
     )
     async def search_knowledge_base_tool(
-        knowledge_base_id: str,
-        query: str,
-        top_n: int = 5,
-        enable_reranker: bool = True,
+        knowledge_base_id: Annotated[str, Field(min_length=1)],
+        query: Annotated[str, Field(min_length=1)],
+        top_n: Annotated[int, Field(ge=1)] = settings.mcp_default_top_n,
+        enable_reranker: bool = settings.mcp_default_enable_reranker,
     ) -> str:
         retrieval_service = await get_retrieval_service()
         return await tool_module.search_knowledge_base(

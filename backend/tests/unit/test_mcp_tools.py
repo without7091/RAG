@@ -166,6 +166,22 @@ class TestSearchKnowledgeBase:
         assert call_kwargs["enable_reranker"] is True
         assert "未找到相关结果" in result
 
+    @pytest.mark.parametrize("top_n", [0, -1])
+    async def test_rejects_non_positive_top_n(self, top_n):
+        mock_retrieval = AsyncMock()
+        mock_retrieval.retrieve = AsyncMock(return_value={"source_nodes": []})
+
+        with pytest.raises(ValueError, match="top_n"):
+            await search_knowledge_base(
+                retrieval_service=mock_retrieval,
+                knowledge_base_id="kb_1",
+                query="test query",
+                top_n=top_n,
+                enable_reranker=True,
+            )
+
+        mock_retrieval.retrieve.assert_not_called()
+
 
 class TestGetPlatformStats:
     async def test_returns_formatted_stats(self, db_session):

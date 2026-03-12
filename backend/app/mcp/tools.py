@@ -81,6 +81,8 @@ async def search_knowledge_base(
     """Search a knowledge base using hybrid retrieval + optional reranking."""
     settings = get_settings()
     effective_top_n = top_n if top_n is not None else settings.mcp_default_top_n
+    if effective_top_n < 1:
+        raise ValueError("top_n must be a positive integer (>= 1)")
     effective_reranker = (
         enable_reranker if enable_reranker is not None else settings.mcp_default_enable_reranker
     )
